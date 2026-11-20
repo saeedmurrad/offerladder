@@ -1,4 +1,6 @@
-# Property Offer Analyser
+# OfferLadder
+
+Developed by [SNA Tech](https://snatech.co.uk).
 
 Enter a house in England or Wales and get a value range from nearby sold prices, the rental return, and three offer figures: where to open, where to aim and where to stop.
 

@@ -1,8 +1,16 @@
 <header class="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur print:hidden">
   <div class="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
     <a href="./" class="flex min-w-0 items-center gap-2.5 text-ink no-underline">
-      <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-brand text-brand-ink"><app-icon name="home" [size]="18" /></span>
-      <span class="truncate font-display text-[16px] font-extrabold tracking-tight">Property Offer Analyser</span>
+      <svg class="size-9 shrink-0" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="15" fill="#0f6b5c" />
+        <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 29.5 32 11.5l20 18" stroke="#fff" stroke-width="5" />
+          <path d="M23.5 31v24M40.5 31v24" stroke="#fff" stroke-width="4" />
+          <path d="M23.5 45h17M23.5 52.5h17" stroke="#fff" stroke-width="3.4" />
+          <path d="M23.5 37.5h17" stroke="#f6c453" stroke-width="3.8" />
+        </g>
+      </svg>
+      <span class="truncate font-display text-[18px] font-extrabold tracking-tight">Offer<span class="text-brand">Ladder</span></span>
       <span class="hidden rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-semibold text-brand sm:inline">England &amp; Wales</span>
     </a>
     <nav class="hidden items-center gap-1 rounded-xl border border-line bg-sunken p-1 md:flex" aria-label="Main">
@@ -655,10 +663,16 @@
       }
     }
 
-    <footer class="px-1 text-[12px] leading-relaxed text-muted">
-      Sold prices and price index: HM Land Registry, Open Government Licence. Postcodes: postcodes.io. Crime: data.police.uk. Flood areas: Environment Agency. Nearby places: © OpenStreetMap contributors. This is a calculation from public records and your own inputs. It is not a survey, a formal valuation or financial advice.
-    </footer>
   </section>
+
+  <footer class="col-span-full mt-4 flex flex-col gap-3 border-t border-line pt-5 text-[12.5px] leading-relaxed text-muted print:mt-2">
+    <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+      <p class="flex items-center gap-2 text-[13.5px] text-ink"><b class="font-display font-extrabold">Offer<span class="text-brand">Ladder</span></b><span class="text-muted">·</span><span>Developed by <a class="font-semibold" href="https://snatech.co.uk" target="_blank" rel="noopener">SNA Tech</a></span></p>
+      <p>© 2026 SNA Tech</p>
+    </div>
+    <p>Sold prices and price index: contains HM Land Registry data © Crown copyright and database right 2026, licensed under the Open Government Licence v3.0. Postcodes: postcodes.io. Crime: data.police.uk. Flood areas: Environment Agency. Nearby places: © OpenStreetMap contributors.</p>
+    <p>OfferLadder is a calculation from public records and your own inputs. It is not a survey, a formal valuation or financial advice.</p>
+  </footer>
 </main>
 
 <!-- Phone: the action stays within thumb reach -->

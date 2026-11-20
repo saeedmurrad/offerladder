@@ -1,11 +1,276 @@
-import { Component, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal } from '@angular/core';
+import { DataService } from './data.service';
+import {
+  adjustmentFactors,
+  askingStance,
+  daysOnMarket,
+  isSubject,
+  localTrend,
+  maxPriceForYield,
+  offerLadder,
+  quartiles,
+  rentalReturns,
+  sdlt,
+  sellerPosition,
+  TAX,
+  valuation,
+} from './engine';
+import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, Sale, SdltMode } from './models';
+import { applyPastedAreas, parsePastedAreas } from './paste';
+
+const STORE_KEY = 'property-offer-analyser.inputs.v1';
+
+function loadInputs(): Inputs {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return { ...DEFAULT_INPUTS, ...JSON.parse(raw) };
+  } catch {
+    /* storage unavailable: start from defaults */
+  }
+  return { ...DEFAULT_INPUTS };
+}
 
 @Component({
   selector: 'app-root',
-  imports: [],
   templateUrl: './app.html',
-  styleUrl: './app.css'
+  styleUrl: './app.css',
 })
 export class App {
-  protected readonly title = signal('property-offer-analyser');
+  private readonly data = inject(DataService);
+
+  readonly inputs = signal<Inputs>(loadInputs());
+  readonly status = signal<'idle' | 'loading' | 'done' | 'error'>('idle');
+  readonly error = signal('');
+  readonly geo = signal<Geo | null>(null);
+  readonly nearbySales = signal<Sale[]>([]);
+  readonly history = signal<Sale[]>([]);
+  readonly comps = signal<Comp[]>([]);
+  readonly area = signal<AreaData | null>(null);
+  readonly pasteText = signal('');
+  readonly pasteNote = signal('');
+  readonly taxCheckedOn = TAX.checkedOn;
+
+  readonly sdltModes: { key: SdltMode; label: string }[] = [
+    { key: 'firstHome', label: 'First home to live in' },
+    { key: 'standard', label: 'Only property you will own' },
+    { key: 'additional', label: 'Additional property or company' },
+  ];
+
+  constructor() {
+    effect(() => {
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(this.inputs()));
+      } catch {
+        /* storage unavailable: nothing to save */
+      }
+    });
+  }
+
+  // ---- derived analysis: recalculates instantly when an input or a comparable changes ----
+  readonly trend = computed(() => localTrend(this.nearbySales(), this.inputs().propertyType));
+  readonly factors = computed(() => adjustmentFactors(this.inputs(), this.trend()));
+  readonly adjustPct = computed(() => this.factors().reduce((sum, f) => sum + f.pct, 0));
+  readonly value = computed(() => valuation(this.comps(), this.inputs().floorArea, this.adjustPct()));
+  readonly ladder = computed(() => {
+    const v = this.value();
+    return v ? offerLadder(v, this.inputs().asking) : null;
+  });
+  readonly stance = computed(() => {
+    const v = this.value();
+    const asking = this.inputs().asking;
+    return v && asking ? askingStance(v, asking) : null;
+  });
+  readonly selectedCount = computed(() => this.comps().filter((c) => c.selected).length);
+  readonly withAreaCount = computed(() => this.comps().filter((c) => c.selected && c.m2).length);
+  readonly yieldPrice = computed(() => {
+    const i = this.inputs();
+    return i.rentPcm && i.rentPcm > 0 ? maxPriceForYield(i.targetNetYieldPct, i.rentPcm, i) : null;
+  });
+  readonly pricePoints = computed(() => {
+    const l = this.ladder();
+    const asking = this.inputs().asking;
+    const points: { label: string; price: number }[] = [];
+    if (l) points.push({ label: 'Open', price: l.open }, { label: 'Target', price: l.target }, { label: 'Ceiling', price: l.ceiling });
+    if (asking) points.push({ label: 'Asking', price: asking });
+    return points;
+  });
+  readonly returns = computed(() => {
+    const i = this.inputs();
+    if (!i.rentPcm || i.rentPcm <= 0) return [];
+    return this.pricePoints().map((p) => ({ ...p, r: rentalReturns(p.price, i.rentPcm as number, i) }));
+  });
+  readonly duty = computed(() =>
+    this.pricePoints().map((p) => ({
+      ...p,
+      firstHome: sdlt(p.price, 'firstHome', this.inputs().nonResident),
+      standard: sdlt(p.price, 'standard', this.inputs().nonResident),
+      additional: sdlt(p.price, 'additional', this.inputs().nonResident),
+    })),
+  );
+  readonly seller = computed(() => sellerPosition(this.history(), this.inputs().asking, this.inputs().sellerWorks));
+  readonly daysListed = computed(() => daysOnMarket(this.inputs().listedDate));
+  readonly sector = computed(() => {
+    const g = this.geo();
+    return g ? `${g.outcode} ${g.postcode.split(' ')[1]?.[0] ?? ''}`.trim() : '';
+  });
+  readonly links = computed(() => {
+    const g = this.geo();
+    if (!g) return null;
+    const pc = encodeURIComponent(g.postcode);
+    const out = g.outcode.toLowerCase();
+    return {
+      epc: `https://find-energy-certificate.service.gov.uk/find-a-certificate/search-by-postcode?postcode=${pc}`,
+      housemetric: `https://housemetric.co.uk/results?str_input=${encodeURIComponent(this.sector())}`,
+      rent: `https://www.zoopla.co.uk/to-rent/property/${out}/`,
+      forSale: `https://www.zoopla.co.uk/for-sale/property/${out}/`,
+      title: 'https://search-property-information.service.gov.uk/',
+      flood: 'https://check-long-term-flood-risk.service.gov.uk/postcode',
+      deprivation: g.lsoaCode ? `https://deprivation.communities.gov.uk/about-your-neighbourhood/${g.lsoaCode}` : '',
+      licensing: `https://www.google.com/search?q=${encodeURIComponent(`selective licensing ${g.district} council streets`)}`,
+      sdlt: 'https://www.gov.uk/stamp-duty-land-tax/residential-property-rates',
+    };
+  });
+
+  // ---- actions ----
+  async analyse(event?: Event): Promise<void> {
+    event?.preventDefault();
+    const i = this.inputs();
+    if (!i.postcode.trim()) {
+      this.fail('Enter the postcode of the house.');
+      return;
+    }
+    this.status.set('loading');
+    this.error.set('');
+    try {
+      const geo = await this.data.lookupPostcode(i.postcode);
+      if (geo.country !== 'England' && geo.country !== 'Wales') {
+        throw new Error(`Land Registry price data covers England and Wales only. ${geo.postcode} is in ${geo.country}.`);
+      }
+      const nearby = await this.data.nearbyPostcodes(geo, i.wideSearch);
+      const since = new Date();
+      since.setMonth(since.getMonth() - i.monthsBack);
+      const [sales, own, area] = await Promise.all([
+        this.data.sales(nearby, since.toISOString().slice(0, 10)),
+        this.data.sales(new Map([[geo.postcode, 0]]), null),
+        this.data.area(geo),
+      ]);
+      this.geo.set(geo);
+      this.set('postcode', geo.postcode);
+      this.nearbySales.set(sales);
+      this.history.set(own.filter((s) => isSubject(s, i.houseNumber, geo.postcode)));
+      this.area.set(area);
+      this.rebuildComps();
+      this.pasteNote.set('');
+      this.status.set('done');
+    } catch (e) {
+      this.fail(e instanceof Error ? e.message : 'Something went wrong while loading the data.');
+    }
+  }
+
+  private fail(message: string): void {
+    this.error.set(message);
+    this.status.set('error');
+  }
+
+  /** Same property type, ordinary market sales, not the subject itself. Price outliers start unticked. */
+  rebuildComps(): void {
+    const i = this.inputs();
+    const g = this.geo();
+    if (!g) return;
+    const pool = this.nearbySales().filter((s) => s.type === i.propertyType && s.standard && !isSubject(s, i.houseNumber, g.postcode));
+    const [q1, , q3] = quartiles(pool.map((s) => s.price));
+    const iqr = q3 - q1;
+    const previous = new Map(this.comps().map((c) => [c.id, c]));
+    this.comps.set(
+      pool.map((s) => {
+        const id = `${s.postcode}|${s.paon}|${s.saon}|${s.date}`;
+        const outlier = pool.length >= 4 && (s.price > q3 + 1.5 * iqr || s.price < q1 - 1.5 * iqr);
+        const old = previous.get(id);
+        return { ...s, id, selected: old ? old.selected : !outlier, m2: old ? old.m2 : null };
+      }),
+    );
+  }
+
+  toggleComp(id: string): void {
+    this.comps.update((list) => list.map((c) => (c.id === id ? { ...c, selected: !c.selected } : c)));
+  }
+
+  setCompArea(id: string, event: Event): void {
+    const m2 = this.num(event);
+    this.comps.update((list) => list.map((c) => (c.id === id ? { ...c, m2 } : c)));
+  }
+
+  applyPaste(): void {
+    const pasted = parsePastedAreas(this.pasteText());
+    if (!pasted.length) {
+      this.pasteNote.set('No floor areas found in that text. Each line needs a house number, a postcode and an area such as "71 m²".');
+      return;
+    }
+    const { comps, matched } = applyPastedAreas(this.comps(), pasted);
+    this.comps.set(comps);
+    this.pasteNote.set(`${pasted.length} rows read, ${matched} matched to the comparables below.`);
+  }
+
+  /** Keep only comparables within 25% of the subject's floor area. Needs areas on the comparables. */
+  keepSimilarSize(): void {
+    const area = this.inputs().floorArea;
+    if (!area) return;
+    this.comps.update((list) => list.map((c) => ({ ...c, selected: !!c.m2 && Math.abs(c.m2 / area - 1) <= 0.25 })));
+  }
+
+  print(): void {
+    window.print();
+  }
+
+  // ---- form helpers ----
+  set<K extends keyof Inputs>(key: K, value: Inputs[K]): void {
+    this.inputs.update((i) => ({ ...i, [key]: value }));
+    if (key === 'propertyType') this.rebuildComps();
+  }
+  text(event: Event): string {
+    return (event.target as HTMLInputElement).value;
+  }
+  num(event: Event): number | null {
+    const v = (event.target as HTMLInputElement).value.replace(/[£,\s]/g, '');
+    if (v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  num0(event: Event): number {
+    return this.num(event) ?? 0;
+  }
+  checked(event: Event): boolean {
+    return (event.target as HTMLInputElement).checked;
+  }
+  // Select values come back as plain strings; the option lists in the template only contain valid keys.
+  pick<K extends keyof Inputs>(key: K, event: Event): void {
+    this.set(key, (event.target as HTMLSelectElement).value as Inputs[K]);
+  }
+
+  // ---- formatting ----
+  gbp(n: number | null | undefined): string {
+    if (n === null || n === undefined || !Number.isFinite(n)) return 'n/a';
+    return (n < 0 ? '-£' : '£') + Math.abs(Math.round(n)).toLocaleString('en-GB');
+  }
+  pct(n: number | null | undefined, digits = 1): string {
+    if (n === null || n === undefined || !Number.isFinite(n)) return 'n/a';
+    return `${n.toFixed(digits)}%`;
+  }
+  signedPct(n: number): string {
+    return `${n > 0 ? '+' : ''}${n}%`;
+  }
+  day(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  address(s: Sale): string {
+    const title = (t: string) => t.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+    return [s.saon, s.paon, title(s.street)].filter(Boolean).join(' ');
+  }
+  vsAsking(price: number): string {
+    const asking = this.inputs().asking;
+    if (!asking) return '';
+    const diff = (price / asking - 1) * 100;
+    return `${diff > 0 ? '+' : ''}${diff.toFixed(0)}% vs asking`;
+  }
 }

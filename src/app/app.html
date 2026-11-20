@@ -1,343 +1,416 @@
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * The content below * * * * * * * * * * * -->
-<!-- * * * * * * * * * * is only a placeholder * * * * * * * * * * -->
-<!-- * * * * * * * * * * and can be replaced.  * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * Delete the template below * * * * * * * * * -->
-<!-- * * * * * * * to get started with your project! * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
+<header class="top">
+  <div class="top-inner">
+    <h1>Property Offer Analyser</h1>
+    <p>Enter a house in England or Wales. The tool pulls nearby sold prices from HM Land Registry and works out a value range, the rental return and what to offer.</p>
+  </div>
+</header>
 
-<style>
-  :host {
-    --bright-blue: oklch(51.01% 0.274 263.83);
-    --electric-violet: oklch(53.18% 0.28 296.97);
-    --french-violet: oklch(47.66% 0.246 305.88);
-    --vivid-pink: oklch(69.02% 0.277 332.77);
-    --hot-red: oklch(61.42% 0.238 15.34);
-    --orange-red: oklch(63.32% 0.24 31.68);
+<main class="layout">
+  <form class="panel" (submit)="analyse($event)" autocomplete="off">
+    <fieldset>
+      <legend>The house</legend>
+      <div class="row">
+        <label class="narrow">House no.
+          <input id="houseNumber" type="text" placeholder="e.g. 12" [value]="inputs().houseNumber" (input)="set('houseNumber', text($event))">
+        </label>
+        <label>Postcode
+          <input id="postcode" type="text" placeholder="e.g. M14 5AB" required [value]="inputs().postcode" (input)="set('postcode', text($event))">
+        </label>
+      </div>
+      <label>Street (optional)
+        <input id="street" type="text" placeholder="e.g. Park Road" [value]="inputs().street" (input)="set('street', text($event))">
+      </label>
+      <div class="row">
+        <label>Asking price £
+          <input id="asking" type="text" inputmode="numeric" placeholder="e.g. 150000" [value]="inputs().asking ?? ''" (input)="set('asking', num($event))">
+        </label>
+        <label>Date listed
+          <input id="listedDate" type="date" [value]="inputs().listedDate" (input)="set('listedDate', text($event))">
+        </label>
+      </div>
+      <label>Type
+        <select id="propertyType" [value]="inputs().propertyType" (change)="pick('propertyType', $event)">
+          <option value="terraced">Terraced (mid or end)</option>
+          <option value="semi-detached">Semi-detached</option>
+          <option value="detached">Detached</option>
+          <option value="flat-maisonette">Flat or maisonette</option>
+        </select>
+      </label>
+      <div class="row">
+        <label>Bedrooms
+          <input id="bedrooms" type="text" inputmode="numeric" placeholder="e.g. 2" [value]="inputs().bedrooms ?? ''" (input)="set('bedrooms', num($event))">
+        </label>
+        <label>Floor area m²
+          <input id="floorArea" type="text" inputmode="decimal" placeholder="e.g. 70" [value]="inputs().floorArea ?? ''" (input)="set('floorArea', num($event))">
+        </label>
+      </div>
+      <p class="hint">Floor area is on the listing's floor plan or the EPC certificate.</p>
+    </fieldset>
 
-    --gray-900: oklch(19.37% 0.006 300.98);
-    --gray-700: oklch(36.98% 0.014 302.71);
-    --gray-400: oklch(70.9% 0.015 304.04);
+    <fieldset>
+      <legend>Condition</legend>
+      <div class="row">
+        <label>Heating
+          <select id="heating" [value]="inputs().heating" (change)="pick('heating', $event)">
+            <option value="unknown">Not sure</option>
+            <option value="gas">Gas central heating</option>
+            <option value="electric">Electric</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+        <label>EPC rating
+          <select id="epc" [value]="inputs().epc" (change)="pick('epc', $event)">
+            <option value="unknown">Not sure</option>
+            <option value="ABC">A, B or C</option>
+            <option value="D">D</option>
+            <option value="E">E</option>
+            <option value="FG">F or G</option>
+          </select>
+        </label>
+      </div>
+      <label>Overall condition
+        <select id="condition" [value]="inputs().condition" (change)="pick('condition', $event)">
+          <option value="refurbished">Recently refurbished</option>
+          <option value="average">Average, lived-in</option>
+          <option value="dated">Dated, needs updating</option>
+          <option value="needsWork">Needs substantial work</option>
+        </select>
+      </label>
+      <label class="check"><input id="bathroomDownstairs" type="checkbox" [checked]="inputs().bathroomDownstairs" (change)="set('bathroomDownstairs', checked($event))"> Bathroom is downstairs</label>
+      <label class="check"><input id="boxRoom" type="checkbox" [checked]="inputs().boxRoom" (change)="set('boxRoom', checked($event))"> A bedroom is a box room (under 6.5 m²)</label>
+    </fieldset>
 
-    --red-to-pink-to-purple-vertical-gradient: linear-gradient(
-      180deg,
-      var(--orange-red) 0%,
-      var(--vivid-pink) 50%,
-      var(--electric-violet) 100%
-    );
+    <fieldset>
+      <legend>Letting it out</legend>
+      <div class="row">
+        <label>Rent £ per month
+          <input id="rentPcm" type="text" inputmode="numeric" placeholder="e.g. 900" [value]="inputs().rentPcm ?? ''" (input)="set('rentPcm', num($event))">
+        </label>
+        <label>Target net yield %
+          <input id="targetNetYieldPct" type="text" inputmode="decimal" [value]="inputs().targetNetYieldPct" (input)="set('targetNetYieldPct', num0($event))">
+        </label>
+      </div>
+      <p class="hint">Use what similar houses nearby are actually asking, not the selling agent's figure.</p>
+    </fieldset>
 
-    --red-to-pink-to-purple-horizontal-gradient: linear-gradient(
-      90deg,
-      var(--orange-red) 0%,
-      var(--vivid-pink) 50%,
-      var(--electric-violet) 100%
-    );
+    <fieldset>
+      <legend>Buying it</legend>
+      <label>Stamp duty position
+        <select id="sdltMode" [value]="inputs().sdltMode" (change)="pick('sdltMode', $event)">
+          @for (m of sdltModes; track m.key) {
+            <option [value]="m.key" [selected]="inputs().sdltMode === m.key">{{ m.label }}</option>
+          }
+        </select>
+      </label>
+      <p class="hint">With joint buyers, if any one of you owns a home anywhere in the world, choose "Additional".</p>
+      <label class="check"><input id="useMortgage" type="checkbox" [checked]="inputs().useMortgage" (change)="set('useMortgage', checked($event))"> Using a mortgage</label>
+      @if (inputs().useMortgage) {
+        <div class="row">
+          <label>Loan % of price
+            <input id="ltvPct" type="text" inputmode="decimal" [value]="inputs().ltvPct" (input)="set('ltvPct', num0($event))">
+          </label>
+          <label>Interest rate %
+            <input id="ratePct" type="text" inputmode="decimal" [value]="inputs().ratePct" (input)="set('ratePct', num0($event))">
+          </label>
+        </div>
+      }
+    </fieldset>
 
-    --pill-accent: var(--bright-blue);
+    <details>
+      <summary>Costs and search settings</summary>
+      <div class="row">
+        <label>Works after purchase £
+          <input id="initialWorks" type="text" inputmode="numeric" [value]="inputs().initialWorks" (input)="set('initialWorks', num0($event))">
+        </label>
+        <label>Council licence fee £
+          <input id="licenceFee" type="text" inputmode="numeric" [value]="inputs().licenceFee" (input)="set('licenceFee', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Legal fees £
+          <input id="legal" type="text" inputmode="numeric" [value]="inputs().legal" (input)="set('legal', num0($event))">
+        </label>
+        <label>Survey £
+          <input id="survey" type="text" inputmode="numeric" [value]="inputs().survey" (input)="set('survey', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Empty weeks a year
+          <input id="voidWeeks" type="text" inputmode="decimal" [value]="inputs().voidWeeks" (input)="set('voidWeeks', num0($event))">
+        </label>
+        <label>Management %
+          <input id="managementPct" type="text" inputmode="decimal" [value]="inputs().managementPct" (input)="set('managementPct', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Maintenance %
+          <input id="maintenancePct" type="text" inputmode="decimal" [value]="inputs().maintenancePct" (input)="set('maintenancePct', num0($event))">
+        </label>
+        <label>Insurance £ a year
+          <input id="insurancePa" type="text" inputmode="numeric" [value]="inputs().insurancePa" (input)="set('insurancePa', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Certificates £ a year
+          <input id="compliancePa" type="text" inputmode="numeric" [value]="inputs().compliancePa" (input)="set('compliancePa', num0($event))">
+        </label>
+        <label>Lender fees £
+          <input id="lenderFees" type="text" inputmode="numeric" [value]="inputs().lenderFees" (input)="set('lenderFees', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Your own value adjustment %
+          <input id="customAdjustPct" type="text" inputmode="decimal" [value]="inputs().customAdjustPct" (input)="set('customAdjustPct', num0($event))">
+        </label>
+        <label>Seller's refurb cost £ (guess)
+          <input id="sellerWorks" type="text" inputmode="numeric" [value]="inputs().sellerWorks" (input)="set('sellerWorks', num0($event))">
+        </label>
+      </div>
+      <div class="row">
+        <label>Months of sales to use
+          <input id="monthsBack" type="text" inputmode="numeric" [value]="inputs().monthsBack" (input)="set('monthsBack', num0($event) || 24)">
+        </label>
+        <label class="check pad"><input id="wideSearch" type="checkbox" [checked]="inputs().wideSearch" (change)="set('wideSearch', checked($event))"> Wider search area</label>
+      </div>
+      <label class="check"><input id="nonResident" type="checkbox" [checked]="inputs().nonResident" (change)="set('nonResident', checked($event))"> Buyer was outside the UK for 183+ days in the last year</label>
+    </details>
 
-    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-      "Segoe UI Symbol";
-    box-sizing: border-box;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    display: block;
-    height: 100dvh;
-  }
+    <button class="primary" type="submit" [disabled]="status() === 'loading'">
+      {{ status() === 'loading' ? 'Loading sold prices…' : 'Analyse this house' }}
+    </button>
+  </form>
 
-  h1 {
-    font-size: 3.125rem;
-    color: var(--gray-900);
-    font-weight: 500;
-    line-height: 100%;
-    letter-spacing: -0.125rem;
-    margin: 0;
-    font-family: "Inter Tight", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-      "Segoe UI Symbol";
-  }
-
-  p {
-    margin: 0;
-    color: var(--gray-700);
-  }
-
-  main {
-    width: 100%;
-    min-height: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 1rem;
-    box-sizing: inherit;
-    position: relative;
-  }
-
-  .angular-logo {
-    max-width: 9.2rem;
-  }
-
-  .content {
-    display: flex;
-    justify-content: space-around;
-    width: 100%;
-    max-width: 700px;
-    margin-bottom: 3rem;
-  }
-
-  .content h1 {
-    margin-top: 1.75rem;
-  }
-
-  .content p {
-    margin-top: 1.5rem;
-  }
-
-  .divider {
-    width: 1px;
-    background: var(--red-to-pink-to-purple-vertical-gradient);
-    margin-inline: 0.5rem;
-  }
-
-  .pill-group {
-    display: flex;
-    flex-direction: column;
-    align-items: start;
-    flex-wrap: wrap;
-    gap: 1.25rem;
-  }
-
-  .pill {
-    display: flex;
-    align-items: center;
-    --pill-accent: var(--bright-blue);
-    background: color-mix(in srgb, var(--pill-accent) 5%, transparent);
-    color: var(--pill-accent);
-    padding-inline: 0.75rem;
-    padding-block: 0.375rem;
-    border-radius: 2.75rem;
-    border: 0;
-    transition: background 0.3s ease;
-    font-family: var(--inter-font);
-    font-size: 0.875rem;
-    font-style: normal;
-    font-weight: 500;
-    line-height: 1.4rem;
-    letter-spacing: -0.00875rem;
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .pill:hover {
-    background: color-mix(in srgb, var(--pill-accent) 15%, transparent);
-  }
-
-  .pill-group .pill:nth-child(6n + 1) {
-    --pill-accent: var(--bright-blue);
-  }
-  .pill-group .pill:nth-child(6n + 2) {
-    --pill-accent: var(--electric-violet);
-  }
-  .pill-group .pill:nth-child(6n + 3) {
-    --pill-accent: var(--french-violet);
-  }
-
-  .pill-group .pill:nth-child(6n + 4),
-  .pill-group .pill:nth-child(6n + 5),
-  .pill-group .pill:nth-child(6n + 6) {
-    --pill-accent: var(--hot-red);
-  }
-
-  .pill-group svg {
-    margin-inline-start: 0.25rem;
-  }
-
-  .social-links {
-    display: flex;
-    align-items: center;
-    gap: 0.73rem;
-    margin-top: 1.5rem;
-  }
-
-  .social-links path {
-    transition: fill 0.3s ease;
-    fill: var(--gray-400);
-  }
-
-  .social-links a:hover svg path {
-    fill: var(--gray-900);
-  }
-
-  @media screen and (max-width: 650px) {
-    .content {
-      flex-direction: column;
-      width: max-content;
+  <section class="report" aria-live="polite">
+    @if (status() === 'idle') {
+      <div class="card empty">
+        <h2>What you will get</h2>
+        <ul>
+          <li>The house's own sale history and what the seller paid.</li>
+          <li>Every nearby sale of the same type from HM Land Registry, which you can tick in or out.</li>
+          <li>A value range, with adjustments for heating, EPC and condition.</li>
+          <li>Three offer figures: where to open, where to aim, and where to stop.</li>
+          <li>Rental return, stamp duty for each buyer type, and crime and flood notes for the area.</li>
+        </ul>
+        <p class="hint">Only the postcode is required. A house number, asking price, floor area and rent make the answer much sharper.</p>
+      </div>
     }
 
-    .divider {
-      height: 1px;
-      width: 100%;
-      background: var(--red-to-pink-to-purple-horizontal-gradient);
-      margin-block: 1.5rem;
+    @if (status() === 'loading') {
+      <div class="card empty"><p>Reading postcodes, Land Registry sales, crime and flood data…</p></div>
     }
-  }
-</style>
 
-<main class="main">
-  <div class="content">
-    <div class="left-side">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 982 239"
-        fill="none"
-        class="angular-logo"
-      >
-        <g clip-path="url(#a)">
-          <path
-            fill="url(#b)"
-            d="M388.676 191.625h30.849L363.31 31.828h-35.758l-56.215 159.797h30.848l13.174-39.356h60.061l13.256 39.356Zm-65.461-62.675 21.602-64.311h1.227l21.602 64.311h-44.431Zm126.831-7.527v70.202h-28.23V71.839h27.002v20.374h1.392c2.782-6.71 7.2-12.028 13.255-15.956 6.056-3.927 13.584-5.89 22.503-5.89 8.264 0 15.465 1.8 21.684 5.318 6.137 3.518 10.964 8.673 14.319 15.382 3.437 6.71 5.074 14.81 4.992 24.383v76.175h-28.23v-71.92c0-8.019-2.046-14.237-6.219-18.819-4.173-4.5-9.819-6.791-17.102-6.791-4.91 0-9.328 1.063-13.174 3.272-3.846 2.128-6.792 5.237-9.001 9.328-2.046 4.009-3.191 8.918-3.191 14.728ZM589.233 239c-10.147 0-18.82-1.391-26.103-4.091-7.282-2.7-13.092-6.382-17.511-10.964-4.418-4.582-7.528-9.655-9.164-15.219l25.448-6.136c1.145 2.372 2.782 4.663 4.991 6.954 2.209 2.291 5.155 4.255 8.837 5.81 3.683 1.554 8.428 2.291 14.074 2.291 8.019 0 14.647-1.964 19.884-5.81 5.237-3.845 7.856-10.227 7.856-19.064v-22.665h-1.391c-1.473 2.946-3.601 5.892-6.383 9.001-2.782 3.109-6.464 5.645-10.965 7.691-4.582 2.046-10.228 3.109-17.101 3.109-9.165 0-17.511-2.209-25.039-6.545-7.446-4.337-13.42-10.883-17.757-19.474-4.418-8.673-6.628-19.473-6.628-32.565 0-13.091 2.21-24.301 6.628-33.383 4.419-9.082 10.311-15.955 17.839-20.7 7.528-4.746 15.874-7.037 25.039-7.037 7.037 0 12.846 1.145 17.347 3.518 4.582 2.373 8.182 5.236 10.883 8.51 2.7 3.272 4.746 6.382 6.137 9.327h1.554v-19.8h27.821v121.749c0 10.228-2.454 18.737-7.364 25.447-4.91 6.709-11.538 11.7-20.048 15.055-8.509 3.355-18.165 4.991-28.884 4.991Zm.245-71.266c5.974 0 11.047-1.473 15.302-4.337 4.173-2.945 7.446-7.118 9.573-12.519 2.21-5.482 3.274-12.027 3.274-19.637 0-7.609-1.064-14.155-3.274-19.8-2.127-5.646-5.318-10.064-9.491-13.255-4.174-3.11-9.329-4.746-15.384-4.746s-11.537 1.636-15.792 4.91c-4.173 3.272-7.365 7.772-9.492 13.418-2.128 5.727-3.191 12.191-3.191 19.392 0 7.2 1.063 13.745 3.273 19.228 2.127 5.482 5.318 9.736 9.573 12.764 4.174 3.027 9.41 4.582 15.629 4.582Zm141.56-26.51V71.839h28.23v119.786h-27.412v-21.273h-1.227c-2.7 6.709-7.119 12.191-13.338 16.446-6.137 4.255-13.747 6.382-22.748 6.382-7.855 0-14.81-1.718-20.783-5.237-5.974-3.518-10.72-8.591-14.075-15.382-3.355-6.709-5.073-14.891-5.073-24.464V71.839h28.312v71.921c0 7.609 2.046 13.664 6.219 18.083 4.173 4.5 9.655 6.709 16.365 6.709 4.173 0 8.183-.982 12.111-3.028 3.927-2.045 7.118-5.072 9.655-9.082 2.537-4.091 3.764-9.164 3.764-15.218Zm65.707-109.395v159.796h-28.23V31.828h28.23Zm44.841 162.169c-7.61 0-14.402-1.391-20.457-4.091-6.055-2.7-10.883-6.791-14.32-12.109-3.518-5.319-5.237-11.946-5.237-19.801 0-6.791 1.228-12.355 3.765-16.773 2.536-4.419 5.891-7.937 10.228-10.637 4.337-2.618 9.164-4.664 14.647-6.055 5.4-1.391 11.046-2.373 16.856-3.027 7.037-.737 12.683-1.391 17.102-1.964 4.337-.573 7.528-1.555 9.574-2.782 1.963-1.309 3.027-3.273 3.027-5.973v-.491c0-5.891-1.718-10.391-5.237-13.664-3.518-3.191-8.51-4.828-15.056-4.828-6.955 0-12.356 1.473-16.447 4.5-4.009 3.028-6.71 6.546-8.183 10.719l-26.348-3.764c2.046-7.282 5.483-13.336 10.31-18.328 4.746-4.909 10.638-8.59 17.511-11.045 6.955-2.455 14.565-3.682 22.912-3.682 5.809 0 11.537.654 17.265 2.045s10.965 3.6 15.711 6.71c4.746 3.109 8.51 7.282 11.455 12.6 2.864 5.318 4.337 11.946 4.337 19.883v80.184h-27.166v-16.446h-.9c-1.719 3.355-4.092 6.464-7.201 9.328-3.109 2.864-6.955 5.237-11.619 6.955-4.828 1.718-10.229 2.536-16.529 2.536Zm7.364-20.701c5.646 0 10.556-1.145 14.729-3.354 4.173-2.291 7.364-5.237 9.655-9.001 2.292-3.763 3.355-7.854 3.355-12.273v-14.155c-.9.737-2.373 1.391-4.5 2.046-2.128.654-4.419 1.145-7.037 1.636-2.619.491-5.155.9-7.692 1.227-2.537.328-4.746.655-6.628.901-4.173.572-8.019 1.472-11.292 2.781-3.355 1.31-5.973 3.11-7.855 5.401-1.964 2.291-2.864 5.318-2.864 8.918 0 5.237 1.882 9.164 5.728 11.782 3.682 2.782 8.51 4.091 14.401 4.091Zm64.643 18.328V71.839h27.412v19.965h1.227c2.21-6.955 5.974-12.274 11.292-16.038 5.319-3.763 11.456-5.645 18.329-5.645 1.555 0 3.355.082 5.237.163 1.964.164 3.601.328 4.91.573v25.938c-1.227-.41-3.109-.819-5.646-1.146a58.814 58.814 0 0 0-7.446-.49c-5.155 0-9.738 1.145-13.829 3.354-4.091 2.209-7.282 5.236-9.655 9.164-2.373 3.927-3.519 8.427-3.519 13.5v70.448h-28.312ZM222.077 39.192l-8.019 125.923L137.387 0l84.69 39.192Zm-53.105 162.825-57.933 33.056-57.934-33.056 11.783-28.556h92.301l11.783 28.556ZM111.039 62.675l30.357 73.803H80.681l30.358-73.803ZM7.937 165.115 0 39.192 84.69 0 7.937 165.115Z"
-          />
-          <path
-            fill="url(#c)"
-            d="M388.676 191.625h30.849L363.31 31.828h-35.758l-56.215 159.797h30.848l13.174-39.356h60.061l13.256 39.356Zm-65.461-62.675 21.602-64.311h1.227l21.602 64.311h-44.431Zm126.831-7.527v70.202h-28.23V71.839h27.002v20.374h1.392c2.782-6.71 7.2-12.028 13.255-15.956 6.056-3.927 13.584-5.89 22.503-5.89 8.264 0 15.465 1.8 21.684 5.318 6.137 3.518 10.964 8.673 14.319 15.382 3.437 6.71 5.074 14.81 4.992 24.383v76.175h-28.23v-71.92c0-8.019-2.046-14.237-6.219-18.819-4.173-4.5-9.819-6.791-17.102-6.791-4.91 0-9.328 1.063-13.174 3.272-3.846 2.128-6.792 5.237-9.001 9.328-2.046 4.009-3.191 8.918-3.191 14.728ZM589.233 239c-10.147 0-18.82-1.391-26.103-4.091-7.282-2.7-13.092-6.382-17.511-10.964-4.418-4.582-7.528-9.655-9.164-15.219l25.448-6.136c1.145 2.372 2.782 4.663 4.991 6.954 2.209 2.291 5.155 4.255 8.837 5.81 3.683 1.554 8.428 2.291 14.074 2.291 8.019 0 14.647-1.964 19.884-5.81 5.237-3.845 7.856-10.227 7.856-19.064v-22.665h-1.391c-1.473 2.946-3.601 5.892-6.383 9.001-2.782 3.109-6.464 5.645-10.965 7.691-4.582 2.046-10.228 3.109-17.101 3.109-9.165 0-17.511-2.209-25.039-6.545-7.446-4.337-13.42-10.883-17.757-19.474-4.418-8.673-6.628-19.473-6.628-32.565 0-13.091 2.21-24.301 6.628-33.383 4.419-9.082 10.311-15.955 17.839-20.7 7.528-4.746 15.874-7.037 25.039-7.037 7.037 0 12.846 1.145 17.347 3.518 4.582 2.373 8.182 5.236 10.883 8.51 2.7 3.272 4.746 6.382 6.137 9.327h1.554v-19.8h27.821v121.749c0 10.228-2.454 18.737-7.364 25.447-4.91 6.709-11.538 11.7-20.048 15.055-8.509 3.355-18.165 4.991-28.884 4.991Zm.245-71.266c5.974 0 11.047-1.473 15.302-4.337 4.173-2.945 7.446-7.118 9.573-12.519 2.21-5.482 3.274-12.027 3.274-19.637 0-7.609-1.064-14.155-3.274-19.8-2.127-5.646-5.318-10.064-9.491-13.255-4.174-3.11-9.329-4.746-15.384-4.746s-11.537 1.636-15.792 4.91c-4.173 3.272-7.365 7.772-9.492 13.418-2.128 5.727-3.191 12.191-3.191 19.392 0 7.2 1.063 13.745 3.273 19.228 2.127 5.482 5.318 9.736 9.573 12.764 4.174 3.027 9.41 4.582 15.629 4.582Zm141.56-26.51V71.839h28.23v119.786h-27.412v-21.273h-1.227c-2.7 6.709-7.119 12.191-13.338 16.446-6.137 4.255-13.747 6.382-22.748 6.382-7.855 0-14.81-1.718-20.783-5.237-5.974-3.518-10.72-8.591-14.075-15.382-3.355-6.709-5.073-14.891-5.073-24.464V71.839h28.312v71.921c0 7.609 2.046 13.664 6.219 18.083 4.173 4.5 9.655 6.709 16.365 6.709 4.173 0 8.183-.982 12.111-3.028 3.927-2.045 7.118-5.072 9.655-9.082 2.537-4.091 3.764-9.164 3.764-15.218Zm65.707-109.395v159.796h-28.23V31.828h28.23Zm44.841 162.169c-7.61 0-14.402-1.391-20.457-4.091-6.055-2.7-10.883-6.791-14.32-12.109-3.518-5.319-5.237-11.946-5.237-19.801 0-6.791 1.228-12.355 3.765-16.773 2.536-4.419 5.891-7.937 10.228-10.637 4.337-2.618 9.164-4.664 14.647-6.055 5.4-1.391 11.046-2.373 16.856-3.027 7.037-.737 12.683-1.391 17.102-1.964 4.337-.573 7.528-1.555 9.574-2.782 1.963-1.309 3.027-3.273 3.027-5.973v-.491c0-5.891-1.718-10.391-5.237-13.664-3.518-3.191-8.51-4.828-15.056-4.828-6.955 0-12.356 1.473-16.447 4.5-4.009 3.028-6.71 6.546-8.183 10.719l-26.348-3.764c2.046-7.282 5.483-13.336 10.31-18.328 4.746-4.909 10.638-8.59 17.511-11.045 6.955-2.455 14.565-3.682 22.912-3.682 5.809 0 11.537.654 17.265 2.045s10.965 3.6 15.711 6.71c4.746 3.109 8.51 7.282 11.455 12.6 2.864 5.318 4.337 11.946 4.337 19.883v80.184h-27.166v-16.446h-.9c-1.719 3.355-4.092 6.464-7.201 9.328-3.109 2.864-6.955 5.237-11.619 6.955-4.828 1.718-10.229 2.536-16.529 2.536Zm7.364-20.701c5.646 0 10.556-1.145 14.729-3.354 4.173-2.291 7.364-5.237 9.655-9.001 2.292-3.763 3.355-7.854 3.355-12.273v-14.155c-.9.737-2.373 1.391-4.5 2.046-2.128.654-4.419 1.145-7.037 1.636-2.619.491-5.155.9-7.692 1.227-2.537.328-4.746.655-6.628.901-4.173.572-8.019 1.472-11.292 2.781-3.355 1.31-5.973 3.11-7.855 5.401-1.964 2.291-2.864 5.318-2.864 8.918 0 5.237 1.882 9.164 5.728 11.782 3.682 2.782 8.51 4.091 14.401 4.091Zm64.643 18.328V71.839h27.412v19.965h1.227c2.21-6.955 5.974-12.274 11.292-16.038 5.319-3.763 11.456-5.645 18.329-5.645 1.555 0 3.355.082 5.237.163 1.964.164 3.601.328 4.91.573v25.938c-1.227-.41-3.109-.819-5.646-1.146a58.814 58.814 0 0 0-7.446-.49c-5.155 0-9.738 1.145-13.829 3.354-4.091 2.209-7.282 5.236-9.655 9.164-2.373 3.927-3.519 8.427-3.519 13.5v70.448h-28.312ZM222.077 39.192l-8.019 125.923L137.387 0l84.69 39.192Zm-53.105 162.825-57.933 33.056-57.934-33.056 11.783-28.556h92.301l11.783 28.556ZM111.039 62.675l30.357 73.803H80.681l30.358-73.803ZM7.937 165.115 0 39.192 84.69 0 7.937 165.115Z"
-          />
-        </g>
-        <defs>
-          <radialGradient
-            id="c"
-            cx="0"
-            cy="0"
-            r="1"
-            gradientTransform="rotate(118.122 171.182 60.81) scale(205.794)"
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stop-color="#FF41F8" />
-            <stop offset=".707" stop-color="#FF41F8" stop-opacity=".5" />
-            <stop offset="1" stop-color="#FF41F8" stop-opacity="0" />
-          </radialGradient>
-          <linearGradient
-            id="b"
-            x1="0"
-            x2="982"
-            y1="192"
-            y2="192"
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stop-color="#F0060B" />
-            <stop offset="0" stop-color="#F0070C" />
-            <stop offset=".526" stop-color="#CC26D5" />
-            <stop offset="1" stop-color="#7702FF" />
-          </linearGradient>
-          <clipPath id="a"><path fill="#fff" d="M0 0h982v239H0z" /></clipPath>
-        </defs>
-      </svg>
-      <h1>Hello, {{ title() }}</h1>
-      <p>Congratulations! Your app is running. 🎉</p>
-    </div>
-    <div class="divider" role="separator" aria-label="Divider"></div>
-    <div class="right-side">
-      <div class="pill-group">
-        @for (item of [
-          { title: 'Explore the Docs', link: 'https://angular.dev' },
-          { title: 'Learn with Tutorials', link: 'https://angular.dev/tutorials' },
-          { title: 'Prompt and best practices for AI', link: 'https://angular.dev/ai/develop-with-ai'},
-          { title: 'CLI Docs', link: 'https://angular.dev/tools/cli' },
-          { title: 'Angular Language Service', link: 'https://angular.dev/tools/language-service' },
-          { title: 'Angular DevTools', link: 'https://angular.dev/tools/devtools' },
-        ]; track item.title) {
-          <a
-            class="pill"
-            [href]="item.link"
-            target="_blank"
-            rel="noopener"
-          >
-            <span>{{ item.title }}</span>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              height="14"
-              viewBox="0 -960 960 960"
-              width="14"
-              fill="currentColor"
-            >
-              <path
-                d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z"
-              />
-            </svg>
-          </a>
+    @if (status() === 'error') {
+      <div class="card error"><h2>Could not analyse</h2><p>{{ error() }}</p></div>
+    }
+
+    @if (status() === 'done' && geo(); as g) {
+      <div class="card verdict">
+        <div class="verdict-head">
+          <div>
+            <div class="eyebrow">Offer analysis</div>
+            <h2>{{ inputs().houseNumber }} {{ inputs().street }} {{ g.postcode }}</h2>
+          </div>
+          <button type="button" class="ghost no-print" (click)="print()">Print or save as PDF</button>
+        </div>
+
+        @if (ladder(); as l) {
+          <div class="ladder">
+            <div><span>Open at</span><b>{{ gbp(l.open) }}</b><small>{{ vsAsking(l.open) }}</small></div>
+            <div class="mid"><span>Aim for</span><b>{{ gbp(l.target) }}</b><small>{{ vsAsking(l.target) }}</small></div>
+            <div><span>Stop at</span><b>{{ gbp(l.ceiling) }}</b><small>{{ vsAsking(l.ceiling) }}</small></div>
+          </div>
+          @if (value(); as v) {
+            <p>Nearby sales put this house at <b>{{ gbp(v.low) }} to {{ gbp(v.high) }}</b>, middle {{ gbp(v.mid) }}.
+              @switch (stance()) {
+                @case ('above') { The asking price of {{ gbp(inputs().asking) }} is above the range those sales support. }
+                @case ('top') { The asking price of {{ gbp(inputs().asking) }} sits in the upper part of that range. }
+                @case ('fair') { The asking price of {{ gbp(inputs().asking) }} is inside that range. }
+                @case ('below') { The asking price of {{ gbp(inputs().asking) }} is below the low end. Find out why before treating it as a bargain. }
+              }
+            </p>
+            @if (v.basis === 'price') {
+              <p class="warn"><b>Rough estimate.</b> This compares sale prices only, so bigger and smaller houses are mixed together. Add floor areas to the comparables below to compare like for like.</p>
+            }
+          }
+          @if (yieldPrice(); as y) {
+            @if (y < l.open) {
+              <p>As a rental at {{ gbp(inputs().rentPcm) }} a month, even the opening offer does not reach your {{ inputs().targetNetYieldPct }}% net yield. That needs {{ gbp(y) }} or less.</p>
+            } @else {
+              <p>As a rental at {{ gbp(inputs().rentPcm) }} a month, the net yield meets your {{ inputs().targetNetYieldPct }}% target at <b>{{ gbp(y) }} or less</b>.</p>
+            }
+          }
+        } @else {
+          <p class="warn">Fewer than three comparable sales are ticked, so no value range can be calculated. Tick more sales below, turn on "Wider search area", or use more months.</p>
+        }
+        <p class="small">Open: 5% under the low end, leaving room to move. Aim for: halfway between the low end and the middle. Stop at: the middle value. None goes above the asking price.</p>
+      </div>
+
+      <div class="card">
+        <h2>This house</h2>
+        @if (history().length) {
+          <div class="scroll"><table>
+            <tr><th>Sold</th><th class="n">Price</th><th>Type on record</th></tr>
+            @for (s of history(); track s.date) {
+              <tr><td>{{ day(s.date) }}</td><td class="n">{{ gbp(s.price) }}</td><td>{{ s.type }}</td></tr>
+            }
+          </table></div>
+        } @else if (inputs().houseNumber) {
+          <p>No sale of number {{ inputs().houseNumber }} at {{ g.postcode }} is on record since 1995. Check the number and postcode, or the owner has held it longer than that.</p>
+        } @else {
+          <p>Add the house number to see this house's own sale history.</p>
+        }
+        @if (seller(); as s) {
+          <ul>
+            <li>The seller paid {{ gbp(s.paid) }} on {{ day(s.paidDate) }}, {{ s.yearsHeld.toFixed(1) }} years ago.
+              @if (s.gainVsAsking !== null) { The asking price is {{ gbp(s.gainVsAsking) }} above that. }
+            </li>
+            @if (s.breakEven !== null) {
+              <li><b>Short ownership.</b> Estimated break-even for the seller is about {{ gbp(s.breakEven) }} (purchase, investor stamp duty, fees, holding costs, your refurb guess of {{ gbp(inputs().sellerWorks) }}, 2% to sell). Offers below it are likely to be refused at first.</li>
+            } @else {
+              <li><b>Long ownership.</b> The seller has no break-even pressure, so a low offer can be accepted, but there is also no forced hurry.</li>
+            }
+          </ul>
+        }
+        @if (daysListed(); as d) {
+          <p>On the market for <b>{{ d }} days</b>.
+            @if (d >= 60) { That is long enough to give a buyer leverage. } @else { That is still fresh; sellers rarely take low offers in the first few weeks. }
+          </p>
         }
       </div>
-      <div class="social-links">
-        <a
-          href="https://github.com/angular/angular"
-          aria-label="Github"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="25"
-            height="24"
-            viewBox="0 0 25 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="Github"
-          >
-            <path
-              d="M12.3047 0C5.50634 0 0 5.50942 0 12.3047C0 17.7423 3.52529 22.3535 8.41332 23.9787C9.02856 24.0946 9.25414 23.7142 9.25414 23.3871C9.25414 23.0949 9.24389 22.3207 9.23876 21.2953C5.81601 22.0377 5.09414 19.6444 5.09414 19.6444C4.53427 18.2243 3.72524 17.8449 3.72524 17.8449C2.61064 17.082 3.81137 17.0973 3.81137 17.0973C5.04697 17.1835 5.69604 18.3647 5.69604 18.3647C6.79321 20.2463 8.57636 19.7029 9.27978 19.3881C9.39052 18.5924 9.70736 18.0499 10.0591 17.7423C7.32641 17.4347 4.45429 16.3765 4.45429 11.6618C4.45429 10.3185 4.9311 9.22133 5.72065 8.36C5.58222 8.04931 5.16694 6.79833 5.82831 5.10337C5.82831 5.10337 6.85883 4.77319 9.2121 6.36459C10.1965 6.09082 11.2424 5.95546 12.2883 5.94931C13.3342 5.95546 14.3801 6.09082 15.3644 6.36459C17.7023 4.77319 18.7328 5.10337 18.7328 5.10337C19.3942 6.79833 18.9789 8.04931 18.8559 8.36C19.6403 9.22133 20.1171 10.3185 20.1171 11.6618C20.1171 16.3888 17.2409 17.4296 14.5031 17.7321C14.9338 18.1012 15.3337 18.8559 15.3337 20.0084C15.3337 21.6552 15.3183 22.978 15.3183 23.3779C15.3183 23.7009 15.5336 24.0854 16.1642 23.9623C21.0871 22.3484 24.6094 17.7341 24.6094 12.3047C24.6094 5.50942 19.0999 0 12.3047 0Z"
-            />
-          </svg>
-        </a>
-        <a
-          href="https://x.com/angular"
-          aria-label="X"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="X"
-          >
-            <path
-              d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
-            />
-          </svg>
-        </a>
-        <a
-          href="https://www.youtube.com/channel/UCbn1OgGei-DV7aSRo_HaAiw"
-          aria-label="Youtube"
-          target="_blank"
-          rel="noopener"
-        >
-          <svg
-            width="29"
-            height="20"
-            viewBox="0 0 29 20"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            alt="Youtube"
-          >
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M27.4896 1.52422C27.9301 1.96749 28.2463 2.51866 28.4068 3.12258C29.0004 5.35161 29.0004 10 29.0004 10C29.0004 10 29.0004 14.6484 28.4068 16.8774C28.2463 17.4813 27.9301 18.0325 27.4896 18.4758C27.0492 18.9191 26.5 19.2389 25.8972 19.4032C23.6778 20 14.8068 20 14.8068 20C14.8068 20 5.93586 20 3.71651 19.4032C3.11363 19.2389 2.56449 18.9191 2.12405 18.4758C1.68361 18.0325 1.36732 17.4813 1.20683 16.8774C0.613281 14.6484 0.613281 10 0.613281 10C0.613281 10 0.613281 5.35161 1.20683 3.12258C1.36732 2.51866 1.68361 1.96749 2.12405 1.52422C2.56449 1.08095 3.11363 0.76113 3.71651 0.596774C5.93586 0 14.8068 0 14.8068 0C14.8068 0 23.6778 0 25.8972 0.596774C26.5 0.76113 27.0492 1.08095 27.4896 1.52422ZM19.3229 10L11.9036 5.77905V14.221L19.3229 10Z"
-            />
-          </svg>
-        </a>
+
+      <div class="card">
+        <h2>Comparable sales</h2>
+        <p>{{ comps().length }} sales of the same type in the last {{ inputs().monthsBack }} months near {{ g.postcode }}. {{ selectedCount() }} are ticked and used; {{ withAreaCount() }} of those have a floor area.
+          @if (trend(); as t) { Median price moved {{ t > 0 ? '+' : '' }}{{ pct(t) }} against the year before. }
+        </p>
+
+        <details class="no-print">
+          <summary>Add floor areas for a like-for-like value</summary>
+          <p class="small">Land Registry does not record size. Open the <a [href]="links()?.housemetric" target="_blank" rel="noopener">sold-price table for {{ sector() }}</a>, copy its rows and paste them here, or type areas into the table below. EPC certificates also show floor area: <a [href]="links()?.epc" target="_blank" rel="noopener">EPC register for {{ g.postcode }}</a>.</p>
+          <textarea id="pasteAreas" rows="4" placeholder="12, Park Road, M14 5AB   30 Jul 2026   £157,000   71 m²" [value]="pasteText()" (input)="pasteText.set(text($event))"></textarea>
+          <div class="actions">
+            <button type="button" class="ghost" (click)="applyPaste()">Read floor areas</button>
+            <button type="button" class="ghost" [disabled]="!inputs().floorArea || !withAreaCount()" (click)="keepSimilarSize()">Keep only similar size (±25%)</button>
+          </div>
+          @if (pasteNote()) { <p class="small">{{ pasteNote() }}</p> }
+        </details>
+
+        <div class="scroll tall"><table>
+          <tr><th>Use</th><th>Address</th><th>Sold</th><th class="n">Price</th><th class="n">m²</th><th class="n">£/m²</th><th class="n">Distance</th></tr>
+          @for (c of comps(); track c.id) {
+            <tr [class.dim]="!c.selected">
+              <td><input type="checkbox" [id]="'use-' + c.id" [checked]="c.selected" (change)="toggleComp(c.id)" [attr.aria-label]="'Use ' + address(c)"></td>
+              <td>{{ address(c) }}, {{ c.postcode }}</td>
+              <td>{{ day(c.date) }}</td>
+              <td class="n">{{ gbp(c.price) }}</td>
+              <td class="n"><input class="m2" type="text" inputmode="decimal" [id]="'m2-' + c.id" [value]="c.m2 ?? ''" (change)="setCompArea(c.id, $event)" [attr.aria-label]="'Floor area of ' + address(c)"></td>
+              <td class="n">{{ c.m2 ? gbp(c.price / c.m2) : '' }}</td>
+              <td class="n">{{ c.distanceM !== null ? c.distanceM + ' m' : '' }}</td>
+            </tr>
+          }
+        </table></div>
       </div>
-    </div>
-  </div>
+
+      @if (value(); as v) {
+        <div class="card">
+          <h2>How the value was set</h2>
+          <div class="scroll"><table>
+            <tr><th>Step</th><th class="n">Figure</th></tr>
+            @if (v.basis === 'perM2') {
+              <tr><td>Median of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }} per m²</td></tr>
+              <tr><td>× floor area of {{ inputs().floorArea }} m²</td><td class="n">{{ gbp(v.q[1] * (inputs().floorArea ?? 0)) }}</td></tr>
+            } @else {
+              <tr><td>Median price of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }}</td></tr>
+            }
+            @for (f of factors(); track f.label) {
+              <tr><td>{{ f.label }}</td><td class="n">{{ signedPct(f.pct) }}</td></tr>
+            }
+            <tr><td>Total adjustment</td><td class="n">{{ signedPct(v.adjustPct) }}</td></tr>
+            <tr><td>Low (lower quartile)</td><td class="n">{{ gbp(v.low) }}</td></tr>
+            <tr class="hl"><td><b>Middle</b></td><td class="n"><b>{{ gbp(v.mid) }}</b></td></tr>
+            <tr><td>High (upper quartile)</td><td class="n">{{ gbp(v.high) }}</td></tr>
+          </table></div>
+          <p class="small">The adjustment percentages are rules of thumb. Change the condition answers, or set your own adjustment under "Costs and search settings".</p>
+        </div>
+      }
+
+      @if (returns().length) {
+        <div class="card">
+          <h2>Return as a rental</h2>
+          <div class="scroll"><table>
+            <tr><th></th><th class="n">Price</th><th class="n">Stamp duty</th><th class="n">Cash in</th><th class="n">Gross yield</th><th class="n">Net income / yr</th><th class="n">Net yield</th>
+              @if (inputs().useMortgage) { <th class="n">Left per month after mortgage</th><th class="n">Return on your cash</th> }
+            </tr>
+            @for (row of returns(); track row.label) {
+              <tr>
+                <td>{{ row.label }}</td><td class="n">{{ gbp(row.price) }}</td><td class="n">{{ gbp(row.r.sdlt) }}</td><td class="n">{{ gbp(row.r.cashIn) }}</td>
+                <td class="n">{{ pct(row.r.grossYield) }}</td><td class="n">{{ gbp(row.r.netIncome) }}</td><td class="n">{{ pct(row.r.netYield) }}</td>
+                @if (inputs().useMortgage) { <td class="n">{{ gbp(row.r.cashflowPm) }}</td><td class="n">{{ pct(row.r.roiMortgage) }}</td> }
+              </tr>
+            }
+          </table></div>
+          <p class="small">Rent {{ gbp(inputs().rentPcm) }} a month, {{ inputs().voidWeeks }} weeks empty a year, {{ inputs().managementPct }}% management, {{ inputs().maintenancePct }}% maintenance, {{ gbp(inputs().insurancePa) }} insurance, {{ gbp(inputs().compliancePa) }} certificates. Cash in includes stamp duty, {{ gbp(inputs().legal) }} legal, {{ gbp(inputs().survey) }} survey, {{ gbp(inputs().initialWorks) }} works and {{ gbp(inputs().licenceFee) }} licence. Before income tax.
+            @if (inputs().useMortgage) { Mortgage: {{ inputs().ltvPct }}% of the price, interest-only at {{ inputs().ratePct }}%. }
+          </p>
+        </div>
+      } @else {
+        <div class="card"><h2>Return as a rental</h2><p>Enter a monthly rent to see yield and cash flow.
+          @if (links(); as l) { Check live asking rents: <a [href]="l.rent" target="_blank" rel="noopener">homes to rent in {{ g.outcode }}</a>. }
+        </p></div>
+      }
+
+      @if (duty().length) {
+        <div class="card">
+          <h2>Stamp duty by buyer type</h2>
+          <div class="scroll"><table>
+            <tr><th></th><th class="n">Price</th><th class="n">First home to live in</th><th class="n">Only property owned</th><th class="n">Additional or company</th></tr>
+            @for (d of duty(); track d.label) {
+              <tr><td>{{ d.label }}</td><td class="n">{{ gbp(d.price) }}</td><td class="n">{{ gbp(d.firstHome) }}</td><td class="n">{{ gbp(d.standard) }}</td><td class="n">{{ gbp(d.additional) }}</td></tr>
+            }
+          </table></div>
+          <p class="small">England and Northern Ireland rates as checked on <a [href]="links()?.sdlt" target="_blank" rel="noopener">gov.uk</a> on {{ taxCheckedOn }}. Wales uses Land Transaction Tax, which this tool does not calculate. Confirm with your solicitor.</p>
+        </div>
+      }
+
+      <div class="card">
+        <h2>The area</h2>
+        <ul>
+          <li>{{ g.ward }} ward, {{ g.district }}. Neighbourhood: {{ g.lsoa }}.
+            @if (links()?.deprivation) { <a [href]="links()?.deprivation" target="_blank" rel="noopener">Deprivation ranking</a>. }
+          </li>
+          @if (area()?.crime; as c) {
+            <li><b>{{ c.total }} crimes</b> recorded within one mile in {{ c.month }}. Most common:
+              @for (t of c.top; track t.category; let last = $last) { {{ t.category }} ({{ t.count }}){{ last ? '.' : ',' }} }
+              A city-centre mile always scores high, so compare with other houses you analyse.
+            </li>
+          } @else {
+            <li>Crime data was not available for this point.</li>
+          }
+          @if (area()?.flood; as f) {
+            @if (f.areas.length) {
+              <li><b>Flood:</b> within 1 km of {{ f.areas.length }} Environment Agency flood alert or warning area(s): {{ f.areas.join('; ') }}. Run the <a [href]="links()?.flood" target="_blank" rel="noopener">long-term flood risk check</a> for the exact address.</li>
+            } @else {
+              <li><b>Flood:</b> no Environment Agency flood alert or warning area within 1 km. Surface-water risk is separate: run the <a [href]="links()?.flood" target="_blank" rel="noopener">long-term flood risk check</a>.</li>
+            }
+          }
+        </ul>
+      </div>
+
+      @if (links(); as l) {
+        <div class="card">
+          <h2>Checks before you offer</h2>
+          <ul>
+            <li><a [href]="l.epc" target="_blank" rel="noopener">EPC certificate</a>: rating, floor area, heating, wall and roof type. Rented homes are due to need EPC C by October 2030.</li>
+            <li><a [href]="l.rent" target="_blank" rel="noopener">Homes to rent in {{ g.outcode }}</a> and <a [href]="l.forSale" target="_blank" rel="noopener">homes for sale in {{ g.outcode }}</a>: the rent you can expect and the competition.</li>
+            <li><a [href]="l.licensing" target="_blank" rel="noopener">Landlord licensing in {{ g.district }}</a>: some streets need a council licence before letting. Add the fee under "Costs and search settings".</li>
+            <li><a [href]="l.title" target="_blank" rel="noopener">Title register, £7</a>: owner, price paid, and whether a lender has a charge.</li>
+            <li>A RICS Level 2 survey, and for a refurbished house the electrical and gas certificates.</li>
+            <li>Make the offer by phone, then confirm by email "subject to contract and survey" with proof of funds or a mortgage agreement in principle.</li>
+          </ul>
+        </div>
+      }
+
+      <p class="small foot">Sold prices: HM Land Registry price-paid data, Open Government Licence. Postcodes: postcodes.io. Crime: data.police.uk. Flood areas: Environment Agency. This is a calculation from public records and your own inputs. It is not a survey, a formal valuation or financial advice.</p>
+    }
+  </section>
 </main>
-
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * The content above * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * is only a placeholder * * * * * * * * * * * -->
-<!-- * * * * * * * * * * and can be replaced.  * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * End of Placeholder  * * * * * * * * * * * * -->
-<!-- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * -->
-
-

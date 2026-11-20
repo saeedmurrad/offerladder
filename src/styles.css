@@ -1,1 +1,57 @@
-/* You can add global styles to this file, and also import other style files */
+/* Brick-and-slate palette; every colour is a token so light and dark stay in step. */
+:root {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --ink: #18211d;
+  --muted: #5d6a64;
+  --line: #d9ded9;
+  --brick: #9a3b2e;
+  --brick-ink: #ffffff;
+  --brick-soft: #f3e4e0;
+  --good-soft: #e2f0e8;
+  --warn: #8a5a00;
+  --warn-soft: #f6ecd3;
+  --display: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+  --body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121816;
+    --surface: #1a2320;
+    --ink: #e8eeea;
+    --muted: #9aa8a1;
+    --line: #2c3833;
+    --brick: #e08a7a;
+    --brick-ink: #1a1210;
+    --brick-soft: #3a2420;
+    --good-soft: #18342a;
+    --warn: #e6bd62;
+    --warn-soft: #3a3018;
+    color-scheme: dark;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+@media print {
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --ink: #000000;
+    --muted: #444444;
+    --line: #bbbbbb;
+    --warn-soft: #f2f2f2;
+  }
+}

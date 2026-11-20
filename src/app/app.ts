@@ -15,10 +15,23 @@ import {
   TAX,
   valuation,
 } from './engine';
-import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, Sale, SdltMode } from './models';
+import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { Icon } from './ui/icon';
+import { ValueBar } from './ui/value-bar';
 
 const STORE_KEY = 'property-offer-analyser.inputs.v1';
+const THEME_KEY = 'property-offer-analyser.theme';
+type Theme = 'light' | 'dark';
+
+function loadTheme(): Theme | null {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === 'light' || t === 'dark' ? t : null;
+  } catch {
+    return null;
+  }
+}
 
 function loadInputs(): Inputs {
   try {
@@ -32,6 +45,7 @@ function loadInputs(): Inputs {
 
 @Component({
   selector: 'app-root',
+  imports: [Icon, ValueBar],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
@@ -49,6 +63,25 @@ export class App {
   readonly pasteText = signal('');
   readonly pasteNote = signal('');
   readonly taxCheckedOn = TAX.checkedOn;
+  readonly theme = signal<Theme | null>(loadTheme());
+  readonly isDark = computed(() => this.theme() === 'dark' || (this.theme() === null && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
+
+  readonly propertyTypes: { key: PropertyType; label: string }[] = [
+    { key: 'terraced', label: 'Terraced' },
+    { key: 'semi-detached', label: 'Semi-detached' },
+    { key: 'detached', label: 'Detached' },
+    { key: 'flat-maisonette', label: 'Flat' },
+  ];
+  readonly sections = [
+    { id: 'offer', label: 'Offer' },
+    { id: 'house', label: 'This house' },
+    { id: 'comps', label: 'Comparables' },
+    { id: 'value', label: 'Value' },
+    { id: 'returns', label: 'Returns' },
+    { id: 'duty', label: 'Stamp duty' },
+    { id: 'area', label: 'Area' },
+    { id: 'checks', label: 'Checks' },
+  ];
 
   readonly sdltModes: { key: SdltMode; label: string }[] = [
     { key: 'firstHome', label: 'First home to live in' },
@@ -64,6 +97,20 @@ export class App {
         /* storage unavailable: nothing to save */
       }
     });
+    effect(() => {
+      const t = this.theme();
+      if (t) document.documentElement.dataset['theme'] = t;
+      else delete document.documentElement.dataset['theme'];
+      try {
+        if (t) localStorage.setItem(THEME_KEY, t);
+      } catch {
+        /* storage unavailable: theme lasts for this visit only */
+      }
+    });
+  }
+
+  toggleTheme(): void {
+    this.theme.set(this.isDark() ? 'light' : 'dark');
   }
 
   // ---- derived analysis: recalculates instantly when an input or a comparable changes ----
@@ -107,6 +154,7 @@ export class App {
       additional: sdlt(p.price, 'additional', this.inputs().nonResident),
     })),
   );
+  readonly targetReturn = computed(() => this.returns().find((r) => r.label === 'Target') ?? null);
   readonly seller = computed(() => sellerPosition(this.history(), this.inputs().asking, this.inputs().sellerWorks));
   readonly daysListed = computed(() => daysOnMarket(this.inputs().listedDate));
   readonly sector = computed(() => {
@@ -162,6 +210,8 @@ export class App {
       this.rebuildComps();
       this.pasteNote.set('');
       this.status.set('done');
+      // On a phone the report sits below the form, so bring it into view.
+      if (window.innerWidth < 1024) setTimeout(() => document.getElementById('report')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
     } catch (e) {
       this.fail(e instanceof Error ? e.message : 'Something went wrong while loading the data.');
     }

@@ -2,7 +2,7 @@
 
 Enter a house in England or Wales and get a value range from nearby sold prices, the rental return, and three offer figures: where to open, where to aim and where to stop.
 
-It is a static Angular app. All data is read live in the browser from public open-data services, so there is no server and nothing is stored anywhere except your own browser.
+It is a static Angular 21 app (standalone components, signals) styled with Tailwind CSS 4, with light and dark themes and a phone layout. All data is read live in the browser from public open-data services, so there is no server and nothing is stored anywhere except your own browser.
 
 ## What it does
 
@@ -64,7 +64,7 @@ npx ng test --watch=false
 npx ng build
 ```
 
-The calculation logic is in `src/app/engine.ts` and is covered by `src/app/app.spec.ts`. Data access is in `src/app/data.service.ts`.
+The calculation logic is in `src/app/engine.ts` and is covered by `src/app/app.spec.ts`. Data access is in `src/app/data.service.ts`. Design tokens and component classes are in `src/styles.css`; the icon set and the value bar are in `src/app/ui/`.
 
 ## Deployment
 

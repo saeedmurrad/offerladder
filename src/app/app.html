@@ -38,6 +38,28 @@
 
   <!-- ============ INPUT ============ -->
   <form id="deal-form" class="card card-pad flex flex-col gap-6 print:hidden" [hidden]="view() !== 'analyse'" (submit)="analyse($event)" autocomplete="off">
+    <section class="-mx-4 -mt-4 rounded-t-2xl border-b border-line bg-brand-soft/60 p-4 sm:-mx-6 sm:-mt-6 sm:p-6">
+      <h2 class="group-title text-brand!"><app-icon name="arrow" [size]="15" />Import from a listing</h2>
+      <div class="flex flex-col gap-3">
+        <p class="hint text-ink!">Open the listing on Zoopla, Rightmove or OnTheMarket, select all, copy, and paste it here. The form fills itself in.</p>
+        <textarea id="listingText" class="input bg-surface!" rows="3" placeholder="Paste the whole listing page here" [value]="listingText()" (input)="listingText.set(text($event))" aria-label="Pasted listing text"></textarea>
+        <button type="button" class="btn-primary h-10! text-[14px]!" [disabled]="importBusy() || !listingText().trim()" (click)="importListing()"><app-icon name="search" [size]="16" />{{ importBusy() ? 'Finding the house…' : 'Read listing' }}</button>
+        @if (importFound().length) {
+          <div class="flex flex-wrap gap-1.5">
+            @for (f of importFound(); track f) { <span class="pill bg-surface text-ink">{{ f }}</span> }
+          </div>
+        }
+        @if (importNote()) { <p class="text-[13px] leading-snug font-medium">{{ importNote() }}</p> }
+        @if (importPostcodes().length > 1) {
+          <div class="flex flex-wrap gap-1.5" role="group" aria-label="Postcodes on this street">
+            @for (o of importPostcodes(); track o.postcode) {
+              <button type="button" class="chip h-8 bg-surface px-2.5 text-[12.5px]" [class.on]="inputs().postcode === o.postcode" (click)="usePostcode(o.postcode)">{{ o.postcode }}</button>
+            }
+          </div>
+        }
+      </div>
+    </section>
+
     <section>
       <h2 class="group-title"><app-icon name="home" [size]="15" />The house</h2>
       <div class="flex flex-col gap-3">
@@ -350,7 +372,13 @@
                 }
               </p>
               @if (v.basis === 'sizeAdjusted') {
-                <div class="callout"><app-icon name="alert" /><p><b>Estimate.</b> Land Registry does not record size, so nearby sale prices were scaled to this house's {{ inputs().floorArea }} m² against a typical {{ v.typicalArea }} m² for this type. <a href="#comps">Add real floor areas to the comparables</a> for a firmer figure.</p></div>
+                <div class="callout"><app-icon name="alert" /><p>
+                  @if (areaAssumed()) {
+                    <b>Rough estimate: floor area assumed.</b> No floor area was given, so {{ areaUsed() }} m² was assumed from the bedroom count and nearby sale prices were scaled to it. Enter the real floor area (it is on the floor plan or the EPC) for a much better figure.
+                  } @else {
+                    <b>Estimate.</b> Land Registry does not record size, so nearby sale prices were scaled to this house's {{ areaUsed() }} m² against a typical {{ v.typicalArea }} m² for this type. <a href="#comps">Add real floor areas to the comparables</a> for a firmer figure.
+                  }
+                </p></div>
               }
               @if (v.basis === 'price') {
                 <div class="callout"><app-icon name="alert" /><p><b>Rough estimate.</b> This compares sale prices only, so bigger and smaller houses are mixed together. Enter this house's floor area, and <a href="#comps">add floor areas to the comparables</a>, to compare like for like.</p></div>
@@ -441,7 +469,7 @@
               <textarea id="pasteAreas" class="input" rows="3" placeholder="12, Park Road, M14 5AB   30 Jul 2026   £157,000   71 m²" [value]="pasteText()" (input)="pasteText.set(text($event))"></textarea>
               <div class="flex flex-wrap gap-2">
                 <button type="button" class="btn-ghost" (click)="applyPaste()">Read floor areas</button>
-                <button type="button" class="btn-ghost" [disabled]="!inputs().floorArea || !withAreaCount()" (click)="keepSimilarSize()">Keep only similar size (±25%)</button>
+                <button type="button" class="btn-ghost" [disabled]="!areaUsed() || !withAreaCount()" (click)="keepSimilarSize()">Keep only similar size (±25%)</button>
               </div>
               @if (pasteNote()) { <p class="hint font-medium text-ink">{{ pasteNote() }}</p> }
             </div>
@@ -492,11 +520,11 @@
               <tr><th>Step</th><th class="n">Figure</th></tr>
               @if (v.basis === 'perM2') {
                 <tr><td>Median of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }} per m²</td></tr>
-                <tr><td>× floor area of {{ inputs().floorArea }} m²</td><td class="n">{{ gbp(v.q[1] * (inputs().floorArea ?? 0)) }}</td></tr>
+                <tr><td>× floor area of {{ areaUsed() }} m²{{ areaAssumed() ? ' (assumed from bedrooms)' : '' }}</td><td class="n">{{ gbp(v.q[1] * (areaUsed() ?? 0)) }}</td></tr>
               } @else {
                 <tr><td>Median price of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }}</td></tr>
                 @if (v.basis === 'sizeAdjusted') {
-                  <tr><td class="whitespace-normal!">Size: {{ inputs().floorArea }} m² against a typical {{ v.typicalArea }} m²</td><td class="n" [class]="v.sizeFactor < 1 ? 'text-bad' : 'text-brand'">{{ signedPct(round1((v.sizeFactor - 1) * 100)) }}</td></tr>
+                  <tr><td class="whitespace-normal!">Size: {{ areaUsed() }} m²{{ areaAssumed() ? ' (assumed from bedrooms)' : '' }} against a typical {{ v.typicalArea }} m²</td><td class="n" [class]="v.sizeFactor < 1 ? 'text-bad' : 'text-brand'">{{ signedPct(round1((v.sizeFactor - 1) * 100)) }}</td></tr>
                 }
               }
               @for (f of factors(); track f.label) {

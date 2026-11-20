@@ -100,6 +100,51 @@ export class DataService {
     }));
   }
 
+  /**
+   * Every recorded sale on a street, found by street name plus either the postcode district ("PE1") or the town.
+   * Used to identify a house from a listing that hides its number.
+   */
+  async streetSales(street: string, outcode: string | null, towns: string[]): Promise<Sale[]> {
+    const clean = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 '&-]/g, '').replace(/\s+/g, ' ').trim();
+    const name = clean(street);
+    if (!name) return [];
+    const attempts = outcode ? [`FILTER(STRSTARTS(?postcode, "${clean(outcode)} "))`] : towns.map((t) => `?addr lrcommon:town "${clean(t)}" .`);
+    for (const constraint of attempts.slice(0, 3)) {
+      const query = `
+        PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
+        PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
+        SELECT ?paon ?saon ?postcode ?amount ?date ?type WHERE {
+          ?addr lrcommon:street "${name}" ; lrcommon:postcode ?postcode .
+          ${constraint.startsWith('?addr') ? constraint : ''}
+          ?tx lrppi:propertyAddress ?addr ; lrppi:pricePaid ?amount ; lrppi:transactionDate ?date ; lrppi:propertyType ?type .
+          OPTIONAL { ?addr lrcommon:paon ?paon }
+          OPTIONAL { ?addr lrcommon:saon ?saon }
+          ${constraint.startsWith('FILTER') ? constraint : ''}
+        } LIMIT 4000`;
+      const res = await fetch(LAND_REGISTRY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/sparql-results+json' },
+        body: 'query=' + encodeURIComponent(query),
+      });
+      if (!res.ok) continue;
+      const rows = (await res.json()).results.bindings as Record<string, { value: string }>[];
+      if (!rows.length) continue;
+      const tail = (uri?: string) => (uri ? uri.slice(uri.lastIndexOf('/') + 1) : '');
+      return rows.map((r) => ({
+        paon: r['paon']?.value ?? '',
+        saon: r['saon']?.value ?? '',
+        street: name,
+        postcode: r['postcode'].value,
+        price: Number(r['amount'].value),
+        date: r['date'].value.slice(0, 10),
+        type: TYPE_MAP[tail(r['type']?.value)] ?? 'other',
+        standard: true,
+        distanceM: null,
+      }));
+    }
+    return [];
+  }
+
   /** Area context is useful, not essential: a failure in any one source must not block the report. */
   async area(geo: Geo): Promise<AreaData> {
     const [crime, flood, hpi, amenities] = await Promise.all([

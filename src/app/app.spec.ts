@@ -1,6 +1,7 @@
-import { offerLadder, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
+import { assumedFloorArea, offerLadder, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
 import { compare } from './compare';
 import { GLOSSARY } from './glossary';
+import { matchHouse, parseListing, streetPostcodes } from './listing-import';
 import { Comp, DEFAULT_INPUTS, Inputs, Sale, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
 
@@ -193,5 +194,151 @@ describe('glossary', () => {
     expect(new Set(names).size).toBe(names.length);
     expect(GLOSSARY.every((t) => t.meaning.length > 20)).toBe(true);
     expect(names).toContain('EPC rating');
+  });
+});
+
+describe('listing import', () => {
+  const ZOOPLA = `Skip to main content
+Menu
+Instant valuation
+Back to search results
+12 Photos
+3 Floor plans
+
+£159,950
+
+See monthly cost
+2 bed terraced house for sale
+Burghley Road, Peterborough PE1
+
+2 beds
+
+1 bath
+
+EPC Rating: E
+
+Chain free
+Freehold
+
+Added on 16/08/2026
+
+About this property
+UPVC double glazing and electric heating
+This two bedroom terraced house has been recently renovated throughout. The ground floor includes a downstairs bathroom.
+Living Room
+3.68m x 3.7m - 12'1" x 12'2"
+Property timeline
+
+Listed
+
+August 2026
+
+£159,950
+
+Sold
+
+February 1999
+
+£34,000
+
+More information
+44 Cowgate, Peterborough PE1 1NA
+Zoopla`;
+
+  const RIGHTMOVE = `Skip to content
+Sign in
+Property for sale
+Ask Rightmove
+Property photo 1 of 10.
+Atkinson Street, PETERBOROUGH
+£170,000
+Can you afford it?
+Added on 02/10/2026
+PROPERTY TYPE
+
+End of Terrace
+
+BEDROOMS
+
+2
+
+BATHROOMS
+
+1
+
+SIZE
+
+764 sq ft
+(71 sq m)
+
+TENURE
+
+Freehold
+Key features
+Gas central heating
+In need of some modernisation`;
+
+  it('reads a Zoopla listing page', () => {
+    const p = parseListing(ZOOPLA);
+    expect(p.source).toBe('Zoopla');
+    expect(p.asking).toBe(159_950);
+    expect(p.street).toBe('Burghley Road');
+    expect(p.places).toEqual(['Peterborough']);
+    expect(p.outcode).toBe('PE1');
+    expect(p.postcode).toBeNull();
+    expect(p.bedrooms).toBe(2);
+    expect(p.propertyType).toBe('terraced');
+    expect(p.listedDate).toBe('2026-08-16');
+    expect(p.epc).toBe('E');
+    expect(p.heating).toBe('electric');
+    expect(p.condition).toBe('refurbished');
+    expect(p.bathroomDownstairs).toBe(true);
+    expect(p.chainFree).toBe(true);
+    expect(p.floorArea).toBeNull(); // room sizes must not be read as floor area
+    expect(p.pastSales).toEqual([{ month: 2, year: 1999, price: 34_000 }]);
+  });
+
+  it('reads a Rightmove listing page', () => {
+    const p = parseListing(RIGHTMOVE);
+    expect(p.source).toBe('Rightmove');
+    expect(p.asking).toBe(170_000);
+    expect(p.street).toBe('Atkinson Street');
+    expect(p.places).toEqual(['PETERBOROUGH']);
+    expect(p.outcode).toBeNull();
+    expect(p.bedrooms).toBe(2);
+    expect(p.propertyType).toBe('terraced');
+    expect(p.listedDate).toBe('2026-10-02');
+    expect(p.floorArea).toBe(71);
+    expect(p.heating).toBe('gas');
+    expect(p.condition).toBe('dated');
+    expect(p.tenure).toBe('Freehold');
+  });
+
+  it('picks up a house number and full postcode when the listing gives them', () => {
+    const p = parseListing('3 bed semi-detached house for sale\n12 Park Road, Manchester M14 5AB\n£250,000');
+    expect([p.houseNumber, p.street, p.postcode, p.propertyType]).toEqual(['12', 'Park Road', 'M14 5AB', 'semi-detached']);
+  });
+
+  const sale = (paon: string, postcode: string, price: number, date: string): Sale => ({ paon, saon: '', street: 'BURGHLEY ROAD', postcode, price, date, type: 'terraced', standard: true, distanceM: null });
+  const street = [sale('86', 'PE1 2QE', 34_000, '1999-02-05'), sale('88', 'PE1 2QE', 23_000, '1995-02-13'), sale('15A', 'PE1 2QA', 105_000, '2025-09-26'), sale('57', 'PE1 2QA', 105_000, '2007-12-21')];
+
+  it('identifies the house from its last sale', () => {
+    expect(matchHouse([{ month: 2, year: 1999, price: 34_000 }], street)).toEqual({ houseNumber: '86', postcode: 'PE1 2QE', sale: { month: 2, year: 1999, price: 34_000 } });
+    expect(matchHouse([{ month: 9, year: 2025, price: 105_000 }], street)!.houseNumber).toBe('15A');
+  });
+
+  it('gives no match when nothing fits or two houses fit', () => {
+    expect(matchHouse([{ month: 3, year: 2001, price: 50_000 }], street)).toBeNull();
+    expect(matchHouse([{ month: null, year: 1999, price: 34_000 }, { month: null, year: 1995, price: 23_000 }], street)).toBeNull();
+    expect(streetPostcodes(street)[0].sales).toBe(2);
+  });
+});
+
+describe('assumed floor area', () => {
+  it('assumes a size from bedrooms only when bedrooms are known', () => {
+    expect(assumedFloorArea('terraced', 2)).toBe(68);
+    expect(assumedFloorArea('flat-maisonette', 1)).toBe(46);
+    expect(assumedFloorArea('detached', 9)).toBe(190);
+    expect(assumedFloorArea('terraced', null)).toBeNull();
   });
 });

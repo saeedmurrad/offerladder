@@ -2,6 +2,7 @@ import { Component, computed, effect, inject, signal } from '@angular/core';
 import { DataService } from './data.service';
 import {
   adjustmentFactors,
+  assumedFloorArea,
   askingStance,
   daysOnMarket,
   isSubject,
@@ -16,6 +17,7 @@ import {
   TAX,
   valuation,
 } from './engine';
+import { matchHouse, parseListing, streetPostcodes } from './listing-import';
 import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
 import { CompareView } from './ui/compare-view';
@@ -75,6 +77,11 @@ export class App {
   readonly history = signal<Sale[]>([]);
   readonly comps = signal<Comp[]>([]);
   readonly area = signal<AreaData | null>(null);
+  readonly listingText = signal('');
+  readonly importBusy = signal(false);
+  readonly importFound = signal<string[]>([]);
+  readonly importNote = signal('');
+  readonly importPostcodes = signal<{ postcode: string; sales: number }[]>([]);
   readonly pasteText = signal('');
   readonly pasteNote = signal('');
   readonly taxCheckedOn = TAX.checkedOn;
@@ -219,7 +226,10 @@ export class App {
   readonly trend = computed(() => localTrend(this.nearbySales(), this.inputs().propertyType));
   readonly factors = computed(() => adjustmentFactors(this.inputs(), this.trend()));
   readonly adjustPct = computed(() => this.factors().reduce((sum, f) => sum + f.pct, 0));
-  readonly value = computed(() => valuation(this.comps(), this.inputs().floorArea, this.adjustPct(), this.inputs().propertyType));
+  /** The floor area used for the valuation: the one entered, or one assumed from the bedroom count. */
+  readonly areaAssumed = computed(() => !this.inputs().floorArea && assumedFloorArea(this.inputs().propertyType, this.inputs().bedrooms) !== null);
+  readonly areaUsed = computed(() => this.inputs().floorArea || assumedFloorArea(this.inputs().propertyType, this.inputs().bedrooms));
+  readonly value = computed(() => valuation(this.comps(), this.areaUsed(), this.adjustPct(), this.inputs().propertyType));
   readonly areaLoading = signal(false);
   readonly ladder = computed(() => {
     const v = this.value();
@@ -281,6 +291,96 @@ export class App {
       sdlt: 'https://www.gov.uk/stamp-duty-land-tax/residential-property-rates',
     };
   });
+
+  // ---- import from a pasted listing ----
+  /** Read pasted listing text, fill the form, then identify the exact house from Land Registry and analyse it. */
+  async importListing(): Promise<void> {
+    const p = parseListing(this.listingText());
+    const found: string[] = [];
+    if (p.asking) found.push(`Asking ${this.gbp(p.asking)}`);
+    if (p.bedrooms) found.push(`${p.bedrooms} bed`);
+    if (p.propertyType) found.push(this.propertyTypes.find((t) => t.key === p.propertyType)?.label ?? p.propertyType);
+    if (p.street) found.push([p.houseNumber, p.street, p.postcode ?? p.outcode].filter(Boolean).join(' '));
+    if (p.listedDate) found.push(`Listed ${this.day(p.listedDate)}`);
+    if (p.floorArea) found.push(`${p.floorArea} m²`);
+    if (p.epc) found.push(`EPC ${p.epc === 'ABC' ? 'A to C' : p.epc === 'FG' ? 'F or G' : p.epc}`);
+    if (p.heating) found.push(p.heating === 'gas' ? 'Gas heating' : 'Electric heating');
+    if (p.condition === 'refurbished') found.push('Refurbished');
+    if (p.chainFree) found.push('No chain');
+    if (p.pastSales.length) found.push(`${p.pastSales.length} past sale${p.pastSales.length === 1 ? '' : 's'}`);
+    this.importFound.set(found);
+    this.importPostcodes.set([]);
+    if (!p.asking && !p.street) {
+      this.importNote.set('Could not read a price or an address from that text. Open the listing page itself (not the search results), select all, copy and paste again.');
+      return;
+    }
+
+    // A new listing is a new house: clear the identity fields, keep the buyer's own cost settings.
+    this.inputs.update((i) => ({
+      ...i,
+      houseNumber: p.houseNumber ?? '',
+      street: p.street ?? '',
+      postcode: p.postcode ?? '',
+      asking: p.asking ?? null,
+      bedrooms: p.bedrooms ?? null,
+      floorArea: p.floorArea ?? null,
+      listedDate: p.listedDate ?? '',
+      propertyType: p.propertyType ?? i.propertyType,
+      epc: p.epc ?? 'unknown',
+      heating: p.heating ?? 'unknown',
+      condition: p.condition ?? 'average',
+      bathroomDownstairs: p.bathroomDownstairs,
+      boxRoom: false,
+      rentPcm: null,
+    }));
+    const rentHint = p.agentRent ? ` The agent mentions ${this.gbp(p.agentRent)} a month in rent; check that against live rents before using it.` : '';
+
+    if (p.postcode && p.houseNumber) {
+      this.importNote.set(`Full address found in the listing.${rentHint}`);
+      await this.analyse();
+      return;
+    }
+    if (!p.street || (!p.outcode && !p.places.length)) {
+      this.importNote.set(`The listing does not show enough of the address to find the house. Enter the postcode and press Analyse.${rentHint}`);
+      return;
+    }
+
+    this.importBusy.set(true);
+    this.importNote.set('Looking for this house in Land Registry…');
+    try {
+      const sales = await this.data.streetSales(p.street, p.outcode, [...p.places].reverse());
+      const match = matchHouse(p.pastSales, sales);
+      if (match) {
+        this.set('houseNumber', match.houseNumber);
+        this.set('postcode', match.postcode);
+        const when = match.sale.month ? `${new Date(2000, match.sale.month - 1).toLocaleString('en-GB', { month: 'long' })} ${match.sale.year}` : `${match.sale.year}`;
+        this.importNote.set(`Identified as ${match.houseNumber} ${p.street}, ${match.postcode}: Land Registry has one sale on this street at ${this.gbp(match.sale.price)} in ${when}.${rentHint}`);
+        await this.analyse();
+      } else {
+        const options = streetPostcodes(sales);
+        this.importPostcodes.set(options.slice(0, 6));
+        if (p.postcode ?? options[0]?.postcode) {
+          this.set('postcode', p.postcode ?? options[0].postcode);
+          this.importNote.set(
+            `${p.pastSales.length ? 'The past sales did not point to one single house' : 'The listing shows no past sale to match'}, so the house number is not known. ` +
+              `Using ${this.inputs().postcode}${options.length > 1 ? '; pick another part of the street below if that is wrong' : ''}. Add the house number when you have it.${rentHint}`,
+          );
+          await this.analyse();
+        } else {
+          this.importNote.set(`No Land Registry sales found for ${p.street}. Enter the postcode and press Analyse.${rentHint}`);
+        }
+      }
+    } catch {
+      this.importNote.set(`Land Registry did not respond, so the house could not be identified. Enter the postcode and press Analyse.${rentHint}`);
+    } finally {
+      this.importBusy.set(false);
+    }
+  }
+
+  usePostcode(postcode: string): void {
+    this.set('postcode', postcode);
+    void this.analyse();
+  }
 
   // ---- actions ----
   async analyse(event?: Event): Promise<void> {
@@ -385,7 +485,7 @@ export class App {
 
   /** Keep only comparables within 25% of the subject's floor area. Needs areas on the comparables. */
   keepSimilarSize(): void {
-    const area = this.inputs().floorArea;
+    const area = this.areaUsed();
     if (!area) return;
     this.comps.update((list) => list.map((c) => ({ ...c, selected: !!c.m2 && Math.abs(c.m2 / area - 1) <= 0.25 })));
   }

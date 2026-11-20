@@ -20,9 +20,13 @@ It is a static Angular 21 app (standalone components, signals) styled with Tailw
 8. **Compares up to three houses.** Add analysed houses to a shortlist, see them side by side, which is best for what, and one pick with its reasons. Scoring: price against nearby sales 30, rental return 25, cash needed 10, space for the money 10, condition 10, crime 10, days on the market 5; small gaps count for less than large ones.
 9. **Explains the jargon.** A searchable glossary of about 60 property terms in plain English.
 
+## Importing a listing
+
+Paste the text of a Zoopla, Rightmove or OnTheMarket listing page (select all, copy) into "Import from a listing". The tool reads the asking price, street, bedrooms, type, date listed, EPC, heating, condition and past sale prices, then matches the past sales against Land Registry to identify the house number and full postcode, which listings usually hide. The text is parsed in your browser; nothing is fetched from the portals.
+
 ## Floor areas
 
-Land Registry does not record the size of a house, and the government EPC API cannot be called from a browser. If you enter the house's own floor area, the tool scales nearby sale prices to it using a typical floor area for the property type (an estimate, and flagged as one). With no floor area at all it compares prices only, which mixes large and small houses.
+Land Registry does not record the size of a house, and the government EPC API cannot be called from a browser. If you enter the house's own floor area, the tool scales nearby sale prices to it using a typical floor area for the property type (an estimate, and flagged as one). With no floor area but a bedroom count, it assumes a typical size for that many bedrooms and says so. With neither, it compares prices only, which mixes large and small houses.
 
 To compare like for like, open the "Add floor areas" panel in the report:
 

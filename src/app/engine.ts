@@ -87,6 +87,23 @@ export const TYPICAL_AREA: Record<PropertyType, number> = {
   'flat-maisonette': 60,
   other: 90,
 };
+/** Rough typical floor areas in m² by type and bedroom count, for when a listing gives bedrooms but no floor area. */
+const AREA_BY_BEDS: Record<PropertyType, number[]> = {
+  // index = bedrooms (0 = studio)
+  terraced: [45, 50, 68, 85, 110, 135],
+  'semi-detached': [50, 55, 70, 90, 115, 145],
+  detached: [60, 65, 80, 105, 140, 190],
+  'flat-maisonette': [32, 46, 61, 80, 100, 120],
+  other: [45, 50, 68, 88, 115, 145],
+};
+
+/** A floor area to assume from the bedroom count, or null when bedrooms are not known. */
+export function assumedFloorArea(type: PropertyType, bedrooms: number | null): number | null {
+  if (bedrooms === null || bedrooms < 0) return null;
+  const table = AREA_BY_BEDS[type];
+  return table[Math.min(Math.round(bedrooms), table.length - 1)];
+}
+
 /** Price does not rise one-for-one with size: a house 10% bigger sells for roughly 8% more. */
 const SIZE_ELASTICITY = 0.8;
 

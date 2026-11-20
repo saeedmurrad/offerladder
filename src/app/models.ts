@@ -149,7 +149,7 @@ export interface Snapshot {
   savedAt: string;
   inputs: Inputs;
   district: string;
-  basis: 'perM2' | 'sizeAdjusted' | 'price';
+  basis: 'perM2' | 'sizeAdjusted' | 'price' | 'ownSale';
   low: number;
   mid: number;
   high: number;

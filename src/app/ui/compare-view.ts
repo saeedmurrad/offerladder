@@ -150,7 +150,7 @@ export class CompareView {
     { label: 'Nearest station', cell: (s) => (s.stationM !== null ? `${(s.stationM / 1000).toFixed(1)} km` : 'n/a') },
     { label: 'Council-area prices, 1 yr', cell: (s) => signed(s.hpiChangePct, 1) },
     { label: 'Area', cell: (s) => s.district },
-    { label: 'Valuation basis', cell: (s) => `${s.basis === 'perM2' ? 'Per m²' : s.basis === 'sizeAdjusted' ? 'Size-adjusted estimate' : 'Price only'}, ${s.compsUsed} sales` },
+    { label: 'Valuation basis', cell: (s) => (s.basis === 'ownSale' ? "The house's own last sale" : `${s.basis === 'perM2' ? 'Per m²' : s.basis === 'sizeAdjusted' ? 'Size-adjusted estimate' : 'Price only'}, ${s.compsUsed} sales`) },
   ];
 
   protected isBest(row: Row, index: number): boolean {

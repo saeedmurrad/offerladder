@@ -107,36 +107,128 @@ export function assumedFloorArea(type: PropertyType, bedrooms: number | null): n
 /** Price does not rise one-for-one with size: a house 10% bigger sells for roughly 8% more. */
 const SIZE_ELASTICITY = 0.8;
 
+const yearsSince = (date: string, today: Date) => Math.max(0, (today.getTime() - new Date(date).getTime()) / (365.25 * 24 * 3600 * 1000));
+
+/**
+ * The house's own last ordinary sale, brought to today's prices.
+ * A recent sale of the house itself is better evidence of its value than any neighbour's sale.
+ */
+export interface OwnSale {
+  paid: number;
+  date: string;
+  years: number;
+  /** The price paid, moved by the local house price index since the sale. Equal to `paid` when no index was available. */
+  indexed: number;
+  /** Index movement since the sale in percent, or null when no index was available. */
+  movePct: number | null;
+  /** Share of the value taken from this sale, from 0.9 for a sale today down to nothing. */
+  weight: number;
+}
+
+/**
+ * How much the house's own last sale counts: 90% for a sale today, falling 12 points a year, nothing after 7.5 years.
+ * An old sale says little: the house, the street and the market have all moved on.
+ */
+export function ownSaleWeight(years: number): number {
+  return Math.max(0, 90 - 12 * Math.max(0, years)) / 100;
+}
+
+/** indexRatio is local prices today over local prices in the month of the sale, or null if not known. */
+export function ownSale(history: Sale[], indexRatio: number | null, today = new Date()): OwnSale | null {
+  const last = history.filter((s) => s.standard && s.price > 0).sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (!last) return null;
+  const years = yearsSince(last.date, today);
+  const weight = ownSaleWeight(years);
+  if (weight <= 0) return null;
+  const known = indexRatio !== null && indexRatio > 0;
+  return { paid: last.price, date: last.date, years, indexed: last.price * (known ? indexRatio : 1), movePct: known ? (indexRatio - 1) * 100 : null, weight };
+}
+
+/** With no usable nearby sales, the range around the house's own sale. */
+const OWN_ONLY_SPREAD = 0.05;
+
 export interface Valuation {
-  /** perM2: like for like on real floor areas. sizeAdjusted: prices scaled by a typical floor area. price: prices only. */
-  basis: 'perM2' | 'sizeAdjusted' | 'price';
+  /** perM2: like for like on real floor areas. sizeAdjusted: prices scaled by a typical floor area. price: prices only. ownSale: the house's own last sale alone. */
+  basis: 'perM2' | 'sizeAdjusted' | 'price' | 'ownSale';
   sizeFactor: number;
   typicalArea: number | null;
   count: number;
   q: [number, number, number]; // quartiles of price or of price per m2
   adjustPct: number;
+  /** The middle value from nearby sales alone, after adjustments. Null when there were too few to use. */
+  compsMid: number | null;
+  /** The house's own last sale, when it was used in the value. */
+  own: OwnSale | null;
   low: number;
   mid: number;
   high: number;
 }
 
-export function valuation(comps: Comp[], floorArea: number | null, adjustPct: number, type: PropertyType = 'terraced'): Valuation | null {
+function compsValuation(comps: Comp[], floorArea: number | null, adjustPct: number, type: PropertyType): Valuation | null {
   const used = comps.filter((c) => c.selected);
   if (used.length < 3) return null;
   const withArea = used.filter((c) => c.m2 && c.m2 > 0);
   const k = 1 + adjustPct / 100;
+  const out = (basis: Valuation['basis'], count: number, q: [number, number, number], s: number, sizeFactor = 1, typicalArea: number | null = null): Valuation => ({
+    basis,
+    sizeFactor,
+    typicalArea,
+    count,
+    q,
+    adjustPct,
+    compsMid: q[1] * s,
+    own: null,
+    low: q[0] * s,
+    mid: q[1] * s,
+    high: q[2] * s,
+  });
   if (floorArea && floorArea > 0 && withArea.length >= 4) {
-    const q = quartiles(withArea.map((c) => c.price / (c.m2 as number)));
-    return { basis: 'perM2', sizeFactor: 1, typicalArea: null, count: withArea.length, q, adjustPct, low: q[0] * floorArea * k, mid: q[1] * floorArea * k, high: q[2] * floorArea * k };
+    return out('perM2', withArea.length, quartiles(withArea.map((c) => c.price / (c.m2 as number))), floorArea * k);
   }
   const q = quartiles(used.map((c) => c.price));
   if (floorArea && floorArea > 0) {
     const typicalArea = TYPICAL_AREA[type];
     const sizeFactor = Math.min(1.5, Math.max(0.6, Math.pow(floorArea / typicalArea, SIZE_ELASTICITY)));
-    const s = k * sizeFactor;
-    return { basis: 'sizeAdjusted', sizeFactor, typicalArea, count: used.length, q, adjustPct, low: q[0] * s, mid: q[1] * s, high: q[2] * s };
+    return out('sizeAdjusted', used.length, q, k * sizeFactor, sizeFactor, typicalArea);
   }
-  return { basis: 'price', sizeFactor: 1, typicalArea: null, count: used.length, q, adjustPct, low: q[0] * k, mid: q[1] * k, high: q[2] * k };
+  return out('price', used.length, q, k);
+}
+
+/**
+ * Value range from nearby sales, pulled towards the house's own last sale when there is a recent one.
+ * The more that sale counts, the narrower the range: a scatter of unlike neighbours must not drag the low end down.
+ * The condition adjustments apply to the nearby sales only: the house's own sale price already reflects the house.
+ */
+export function valuation(comps: Comp[], floorArea: number | null, adjustPct: number, type: PropertyType = 'terraced', own: OwnSale | null = null): Valuation | null {
+  const base = compsValuation(comps, floorArea, adjustPct, type);
+  if (!own) return base;
+  if (!base) {
+    return {
+      basis: 'ownSale',
+      sizeFactor: 1,
+      typicalArea: null,
+      count: 0,
+      q: [NaN, NaN, NaN],
+      adjustPct: 0,
+      compsMid: null,
+      own,
+      low: own.indexed * (1 - OWN_ONLY_SPREAD),
+      mid: own.indexed,
+      high: own.indexed * (1 + OWN_ONLY_SPREAD),
+    };
+  }
+  const w = own.weight;
+  const mid = base.mid * (1 - w) + own.indexed * w;
+  // The width of the range is blended the same way: as wide as the nearby sales when they carry the value,
+  // down to 5% either side when the house's own sale does.
+  const low = mid * ((base.low / base.mid) * (1 - w) + (1 - OWN_ONLY_SPREAD) * w);
+  const high = mid * ((base.high / base.mid) * (1 - w) + (1 + OWN_ONLY_SPREAD) * w);
+  return { ...base, own, low, mid, high };
+}
+
+/** How far nearby sales alone sit from the house's own indexed sale, in percent. Null when either is missing. */
+export function evidenceGapPct(v: Valuation): number | null {
+  return v.own && v.compsMid ? (v.compsMid / v.own.indexed - 1) * 100 : null;
 }
 
 /** Median price of same-type sales in the last 12 months against the 12 months before. Null if either side has fewer than 15 sales: small samples swing wildly. */
@@ -245,7 +337,7 @@ export interface SellerPosition {
 export function sellerPosition(history: Sale[], asking: number | null, sellerWorks: number, today = new Date()): SellerPosition | null {
   if (!history.length) return null;
   const last = [...history].sort((a, b) => b.date.localeCompare(a.date))[0];
-  const years = (today.getTime() - new Date(last.date).getTime()) / (365.25 * 24 * 3600 * 1000);
+  const years = yearsSince(last.date, today);
   let breakEven: number | null = null;
   if (years < 3) {
     const moneyIn = last.price + sdlt(last.price, 'additional') + 1500 + sellerWorks + Math.round(years * 12) * 200;

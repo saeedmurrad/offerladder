@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
-/** One horizontal scale showing the range nearby sales support, the three offer figures and the asking price. */
+/** One horizontal scale showing the range the evidence supports, the three offer figures and the asking price. */
 @Component({
   selector: 'app-value-bar',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -22,7 +22,7 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
       <div class="mt-2.5 flex items-center justify-between gap-3 text-[11.5px] text-muted tabular-nums">
         <span>{{ short(min()) }}</span>
         <span class="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-          <span class="flex items-center gap-1.5"><i class="h-2 w-5 rounded-full bg-brand/30"></i>Range nearby sales support</span>
+          <span class="flex items-center gap-1.5"><i class="h-2 w-5 rounded-full bg-brand/30"></i>Range the evidence supports</span>
           <span class="flex items-center gap-1.5"><i class="h-3 w-0.5 bg-brand"></i>Middle</span>
         </span>
         <span>{{ short(max()) }}</span>

@@ -1,7 +1,7 @@
-import { assumedFloorArea, offerLadder, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
+import { assumedFloorArea, evidenceGapPct, offerLadder, ownSale, ownSaleWeight, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
 import { compare } from './compare';
 import { GLOSSARY } from './glossary';
-import { matchHouse, parseListing, streetPostcodes } from './listing-import';
+import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
 import { Comp, DEFAULT_INPUTS, Inputs, Sale, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
 
@@ -340,5 +340,79 @@ describe('assumed floor area', () => {
     expect(assumedFloorArea('flat-maisonette', 1)).toBe(46);
     expect(assumedFloorArea('detached', 9)).toBe(190);
     expect(assumedFloorArea('terraced', null)).toBeNull();
+  });
+});
+
+describe("the house's own last sale", () => {
+  const today = new Date('2026-11-20');
+  const sale = (price: number, date: string, standard = true): Sale => ({ paon: '24', saon: '', street: 'X', postcode: 'AB1 2CD', price, date, type: 'semi-detached', standard, distanceM: 0 });
+  // Ten nearby sales of a cheaper kind of house: lower quartile £158,000, median £206,250.
+  const cheaper = [150_000, 155_000, 158_000, 158_000, 200_000, 212_500, 250_000, 269_000, 269_500, 290_000].map((p, n) => comp(p, null, `${n + 1}`));
+
+  it('weighs a sale less the older it is, and not at all after 7.5 years', () => {
+    expect(ownSaleWeight(0)).toBeCloseTo(0.9);
+    expect(ownSaleWeight(2)).toBeCloseTo(0.66);
+    expect(ownSaleWeight(7.5)).toBe(0);
+    expect(ownSale([sale(90_000, '2012-03-01')], 1.5, today)).toBeNull();
+    expect(ownSale([], 1, today)).toBeNull();
+  });
+
+  it('uses the latest ordinary sale and moves it by the local price index', () => {
+    const o = ownSale([sale(154_000, '2010-08-09'), sale(247_500, '2026-08-17'), sale(120_000, '2026-10-01', false)], 1.02, today)!;
+    expect(o.paid).toBe(247_500);
+    expect(o.indexed).toBeCloseTo(252_450);
+    expect(o.movePct).toBeCloseTo(2);
+    expect(ownSale([sale(247_500, '2026-08-17')], null, today)!.indexed).toBe(247_500);
+  });
+
+  it('does not open far below what the house itself sold for three months ago', () => {
+    const before = offerLadder(valuation(cheaper, null, 0)!, null);
+    expect(before.open).toBe(150_000); // the fault: £97,500 under a sale made three months earlier
+    const v = valuation(cheaper, null, 0, 'terraced', ownSale([sale(247_500, '2026-08-17')], 1, today))!;
+    expect(v.compsMid).toBe(206_250);
+    expect(v.mid).toBeGreaterThan(240_000);
+    expect(v.mid).toBeLessThan(247_500);
+    expect(evidenceGapPct(v)!).toBeLessThan(-15);
+    const l = offerLadder(v, null);
+    expect(l.ceiling).toBeGreaterThan(240_000);
+    // Mismatched neighbours spread from £150,000 to £290,000; that scatter must not drag the opening offer down.
+    expect(l.open).toBeGreaterThan(247_500 * 0.85);
+    expect(v.high).toBeLessThan(247_500 * 1.1);
+    expect(l.open).toBeLessThan(l.target);
+    expect(l.target).toBeLessThan(l.ceiling);
+  });
+
+  it('leaves the value alone when the nearby sales agree with the house', () => {
+    const like = [240_000, 245_000, 247_500, 250_000, 255_000].map((p, n) => comp(p, null, `${n + 1}`));
+    const v = valuation(like, null, 0, 'terraced', ownSale([sale(247_500, '2026-08-17')], 1, today))!;
+    expect(v.mid).toBeCloseTo(247_500);
+    expect(Math.abs(evidenceGapPct(v)!)).toBeLessThan(1);
+  });
+
+  it('still gives a range from the house alone when there are too few nearby sales', () => {
+    const v = valuation(cheaper.slice(0, 2), null, -10, 'terraced', ownSale([sale(200_000, '2026-08-17')], 1, today))!;
+    expect(v.basis).toBe('ownSale');
+    expect([v.low, v.mid, v.high]).toEqual([190_000, 200_000, 210_000]);
+    expect(valuation(cheaper.slice(0, 2), null, 0)).toBeNull();
+  });
+});
+
+describe('a link pasted instead of the listing', () => {
+  it('recognises a bare link and names the site', () => {
+    expect(pastedLink('https://www.zoopla.co.uk/for-sale/details/12345678/')).toEqual({ url: 'https://www.zoopla.co.uk/for-sale/details/12345678/', portal: 'Zoopla' });
+    expect(pastedLink('  www.rightmove.co.uk/properties/123456789#/?channel=RES_BUY ')!.portal).toBe('Rightmove');
+    expect(pastedLink('onthemarket.com/details/1234567/')).toEqual({ url: 'https://onthemarket.com/details/1234567/', portal: 'OnTheMarket' });
+    expect(pastedLink('https://example.com/house')!.portal).toBeNull();
+  });
+
+  it('recognises a link shared from a phone with a few words around it', () => {
+    const p = pastedLink('Check out this property on Zoopla\nhttps://www.zoopla.co.uk/for-sale/details/12345678/.')!;
+    expect(p.url).toBe('https://www.zoopla.co.uk/for-sale/details/12345678/');
+  });
+
+  it('does not mistake real listing text for a link', () => {
+    expect(pastedLink('3 bed terraced house for sale\nBurghley Road, Peterborough PE1\n£159,950\nhttps://www.zoopla.co.uk/for-sale/details/12345678/')).toBeNull();
+    expect(pastedLink('3 bed terraced house for sale')).toBeNull();
+    expect(pastedLink('')).toBeNull();
   });
 });

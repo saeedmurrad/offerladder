@@ -5,11 +5,13 @@ import {
   assumedFloorArea,
   askingStance,
   daysOnMarket,
+  evidenceGapPct,
   isSubject,
   normaliseHouse,
   localTrend,
   maxPriceForYield,
   offerLadder,
+  ownSale,
   quartiles,
   rentalReturns,
   sdlt,
@@ -17,7 +19,7 @@ import {
   TAX,
   valuation,
 } from './engine';
-import { matchHouse, parseListing, streetPostcodes } from './listing-import';
+import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
 import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
 import { CompareView } from './ui/compare-view';
@@ -82,6 +84,13 @@ export class App {
   readonly importFound = signal<string[]>([]);
   readonly importNote = signal('');
   readonly importPostcodes = signal<{ postcode: string; sales: number }[]>([]);
+  /** Set when a web address was pasted instead of the listing text, so the page can offer to open it. */
+  readonly importLink = signal('');
+  /** Local prices today over local prices in the month this house last sold; null when not known. */
+  readonly ownIndex = signal<number | null>(null);
+  /** Says so when the property type was taken from the house's own Land Registry record. */
+  readonly typeNote = signal('');
+  private analysedId = '';
   readonly pasteText = signal('');
   readonly pasteNote = signal('');
   readonly taxCheckedOn = TAX.checkedOn;
@@ -206,7 +215,8 @@ export class App {
   openSaved(s: Snapshot): void {
     this.inputs.set({ ...DEFAULT_INPUTS, ...s.inputs });
     this.go('analyse');
-    void this.analyse();
+    // A saved house keeps the type it was saved with.
+    void this.analyse(undefined, true);
   }
 
   removeSaved(id: string): void {
@@ -229,7 +239,15 @@ export class App {
   /** The floor area used for the valuation: the one entered, or one assumed from the bedroom count. */
   readonly areaAssumed = computed(() => !this.inputs().floorArea && assumedFloorArea(this.inputs().propertyType, this.inputs().bedrooms) !== null);
   readonly areaUsed = computed(() => this.inputs().floorArea || assumedFloorArea(this.inputs().propertyType, this.inputs().bedrooms));
-  readonly value = computed(() => valuation(this.comps(), this.areaUsed(), this.adjustPct(), this.inputs().propertyType));
+  /** The house's own last sale at today's prices, when it is recent enough to count. */
+  readonly own = computed(() => ownSale(this.history(), this.ownIndex()));
+  readonly value = computed(() => valuation(this.comps(), this.areaUsed(), this.adjustPct(), this.inputs().propertyType, this.own()));
+  /** Set when nearby sales alone sit more than 15% away from the house's own sale: a sign they are not like for like. */
+  readonly evidenceGap = computed(() => {
+    const v = this.value();
+    const gap = v ? evidenceGapPct(v) : null;
+    return gap !== null && Math.abs(gap) > 15 ? gap : null;
+  });
   readonly areaLoading = signal(false);
   readonly ladder = computed(() => {
     const v = this.value();
@@ -295,6 +313,19 @@ export class App {
   // ---- import from a pasted listing ----
   /** Read pasted listing text, fill the form, then identify the exact house from Land Registry and analyse it. */
   async importListing(): Promise<void> {
+    this.importLink.set('');
+    const link = pastedLink(this.listingText());
+    if (link) {
+      // Nothing can be read from a web address alone, so say so plainly instead of failing quietly.
+      this.importFound.set([]);
+      this.importPostcodes.set([]);
+      this.importLink.set(link.url);
+      this.importNote.set(
+        `That is a link to the listing, not the listing itself, so there is no price or address in it to read. ${link.portal ?? 'The property site'} does not let other websites open its pages, and OfferLadder runs entirely in your browser. ` +
+          'Open the listing, select the whole page (Ctrl+A, or Cmd+A on a Mac), copy it, and paste it here in place of the link.',
+      );
+      return;
+    }
     const p = parseListing(this.listingText());
     const found: string[] = [];
     if (p.asking) found.push(`Asking ${this.gbp(p.asking)}`);
@@ -383,9 +414,9 @@ export class App {
   }
 
   // ---- actions ----
-  async analyse(event?: Event): Promise<void> {
+  async analyse(event?: Event, keepType = false): Promise<void> {
     event?.preventDefault();
-    const i = this.inputs();
+    let i = this.inputs();
     if (!i.postcode.trim()) {
       this.fail('Enter the postcode of the house.');
       return;
@@ -425,10 +456,27 @@ export class App {
           ),
         );
       });
+      const history = own.filter((s) => isSubject(s, i.houseNumber, geo.postcode));
+      // Land Registry records what kind of house this is. Comparing it with another kind gives a wrong value,
+      // so the first analysis of a house takes the type from its own record. The buyer can still change it afterwards.
+      const id = `${geo.postcode}|${normaliseHouse(i.houseNumber)}`;
+      const recorded = [...history].sort((a, b) => b.date.localeCompare(a.date))[0]?.type;
+      this.typeNote.set('');
+      if (!keepType && id !== this.analysedId && recorded && recorded !== 'other' && recorded !== i.propertyType) {
+        const label = (t: PropertyType) => this.propertyTypes.find((x) => x.key === t)?.label ?? t;
+        this.typeNote.set(`Type changed from ${label(i.propertyType)} to ${label(recorded)}: that is how Land Registry records this house. Change it back if that is wrong.`);
+        this.inputs.update((x) => ({ ...x, propertyType: recorded }));
+        i = this.inputs();
+      }
+      this.analysedId = id;
+      // Bring the house's own last sale to today's prices. Without the index the sale is used as it stands.
+      const lastSale = ownSale(history, null);
+      const move = lastSale ? await this.data.priceMove(geo, i.propertyType, lastSale.date.slice(0, 7)).catch(() => null) : null;
       this.geo.set(geo);
       this.set('postcode', geo.postcode);
       this.nearbySales.set(sales);
-      this.history.set(own.filter((s) => isSubject(s, i.houseNumber, geo.postcode)));
+      this.ownIndex.set(move);
+      this.history.set(history);
       this.rebuildComps();
       this.pasteNote.set('');
       this.status.set('done');
@@ -497,7 +545,10 @@ export class App {
   // ---- form helpers ----
   set<K extends keyof Inputs>(key: K, value: Inputs[K]): void {
     this.inputs.update((i) => ({ ...i, [key]: value }));
-    if (key === 'propertyType') this.rebuildComps();
+    if (key === 'propertyType') {
+      this.typeNote.set('');
+      this.rebuildComps();
+    }
   }
   text(event: Event): string {
     return (event.target as HTMLInputElement).value;

@@ -166,6 +166,31 @@ export function parseListing(text: string): ParsedListing {
   return out;
 }
 
+export interface PastedLink {
+  url: string;
+  portal: ParsedListing['source'];
+}
+
+/**
+ * Spots a web address pasted in place of the listing text: a link on its own, or a link with a few words around it
+ * as a phone's Share button sends ("Check out this property on Zoopla https://...").
+ * Real listing text is long and has a price in it, so it never matches.
+ */
+export function pastedLink(text: string): PastedLink | null {
+  const found = text.match(/\b(?:https?:\/\/|www\.)[^\s<>"']+|\b(?:[a-z0-9-]+\.)*(?:zoopla\.co\.uk|rightmove\.co\.uk|onthemarket\.com)\/[^\s<>"']*/i);
+  if (!found) return null;
+  const rest = text.replace(found[0], ' ').trim();
+  if (rest.length > 120 || /£\s?\d/.test(rest)) return null;
+  const url = (/^https?:\/\//i.test(found[0]) ? found[0] : `https://${found[0]}`).replace(/[.,;:!?)\]]+$/, '');
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    const portal = /(^|\.)zoopla\.co\.uk$/.test(host) ? 'Zoopla' : /(^|\.)rightmove\.co\.uk$/.test(host) ? 'Rightmove' : /(^|\.)onthemarket\.com$/.test(host) ? 'OnTheMarket' : null;
+    return { url, portal };
+  } catch {
+    return null;
+  }
+}
+
 export interface HouseMatch {
   houseNumber: string;
   postcode: string;

@@ -145,6 +145,48 @@ export class DataService {
     return [];
   }
 
+  /**
+   * How far prices of this property type have moved in the council area since a month (yyyy-mm), as a ratio:
+   * 1.04 means 4% up. From the UK House Price Index, which runs about two months behind.
+   * Null when the index does not cover the area or the month, which includes a sale newer than the latest index month.
+   */
+  async priceMove(geo: Geo, type: PropertyType, sinceMonth: string): Promise<number | null> {
+    if (!/^[EW]\d{8}$/.test(geo.districtCode) || !/^\d{4}-\d{2}$/.test(sinceMonth)) return null;
+    const byType: Partial<Record<PropertyType, string>> = {
+      terraced: 'housePriceIndexTerraced',
+      'semi-detached': 'housePriceIndexSemiDetached',
+      detached: 'housePriceIndexDetached',
+      'flat-maisonette': 'housePriceIndexFlatMaisonette',
+    };
+    const typed = byType[type];
+    const query = `
+      PREFIX ukhpi: <http://landregistry.data.gov.uk/def/ukhpi/>
+      PREFIX owl: <http://www.w3.org/2002/07/owl#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?month ?all ?typed WHERE {
+        ?region owl:sameAs|rdfs:seeAlso <http://statistics.data.gov.uk/id/statistical-geography/${geo.districtCode}> .
+        ?obs ukhpi:refRegion ?region ; ukhpi:refMonth ?month ; ukhpi:housePriceIndex ?all .
+        ${typed ? `OPTIONAL { ?obs ukhpi:${typed} ?typed }` : ''}
+        FILTER(?month >= "${sinceMonth}"^^<http://www.w3.org/2001/XMLSchema#gYearMonth>)
+      } ORDER BY ?month LIMIT 200`;
+    const res = await fetch(LAND_REGISTRY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/sparql-results+json' },
+      body: 'query=' + encodeURIComponent(query),
+    });
+    if (!res.ok) return null;
+    const rows = (await res.json()).results.bindings as Record<string, { value: string }>[];
+    // No rows: the area is not in the index, or the sale is newer than the latest index month.
+    // The index must also start in the month of the sale, or the movement would be measured from the wrong point.
+    if (!rows.length || rows[0]['month'].value.slice(0, 7) !== sinceMonth) return null;
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const key = first['typed'] && last['typed'] ? 'typed' : 'all';
+    const from = Number(first[key].value);
+    const to = Number(last[key].value);
+    return from > 0 && to > 0 ? to / from : null;
+  }
+
   /** Area context is useful, not essential: a failure in any one source must not block the report. */
   async area(geo: Geo): Promise<AreaData> {
     const [crime, flood, hpi, amenities] = await Promise.all([
@@ -157,14 +199,15 @@ export class DataService {
     return { crime, flood, hpi, amenities };
   }
 
-  /** Latest UK House Price Index figures for the council area, matched by its official area code. */
+  /** Latest UK House Price Index figures for the council area, matched by its official area code (the index links some areas with sameAs and others with seeAlso). */
   private async hpi(geo: Geo): Promise<Hpi | null> {
     if (!/^[EW]\d{8}$/.test(geo.districtCode)) return null;
     const query = `
       PREFIX ukhpi: <http://landregistry.data.gov.uk/def/ukhpi/>
       PREFIX owl: <http://www.w3.org/2002/07/owl#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
       SELECT ?month ?avg ?chg ?terr ?semi ?det ?flat WHERE {
-        ?region owl:sameAs <http://statistics.data.gov.uk/id/statistical-geography/${geo.districtCode}> .
+        ?region owl:sameAs|rdfs:seeAlso <http://statistics.data.gov.uk/id/statistical-geography/${geo.districtCode}> .
         ?obs ukhpi:refRegion ?region ; ukhpi:refMonth ?month ; ukhpi:averagePrice ?avg .
         OPTIONAL { ?obs ukhpi:percentageAnnualChange ?chg }
         OPTIONAL { ?obs ukhpi:averagePriceTerraced ?terr }

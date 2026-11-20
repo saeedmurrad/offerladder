@@ -8,9 +8,10 @@ It is a static Angular 21 app (standalone components, signals) styled with Tailw
 
 ## What it does
 
-1. **Finds the house.** Postcode lookup gives the ward, council area and coordinates. With a house number it shows that house's own sale history and what the seller paid.
+1. **Finds the house.** Postcode lookup gives the ward, council area and coordinates. With a house number it shows that house's own sale history and what the seller paid, and takes the property type from the house's own Land Registry record so it is compared with the right kind of house.
 2. **Pulls comparables.** Every sale of the same property type in the nearest postcodes (about 400 m in a town; wider on request) over the last 24 months, from HM Land Registry. Each one can be ticked in or out. Price outliers start unticked.
 3. **Values it.** Lower quartile, median and upper quartile of the comparables, adjusted for heating, EPC, condition and layout. If comparables have floor areas, the value is worked out per m² against the subject's floor area; otherwise on price alone, with a warning.
+   - **The house's own last sale counts most.** If the house itself sold in the last 7.5 years, that price is moved to today with the UK House Price Index for the council area and blended into the value: 90% weight for a sale today, falling 12 points a year. The range narrows the same way, down to 5% either side. If nearby sales alone sit more than 15% away from the house's own sale, the report says so. With fewer than three comparables, the house's own sale is used alone.
 4. **Builds the offer ladder.**
    - Open: 5% under the low end, leaving room to move.
    - Aim for: halfway between the low end and the middle.
@@ -24,7 +25,7 @@ It is a static Angular 21 app (standalone components, signals) styled with Tailw
 
 ## Importing a listing
 
-Paste the text of a Zoopla, Rightmove or OnTheMarket listing page (select all, copy) into "Import from a listing". The tool reads the asking price, street, bedrooms, type, date listed, EPC, heating, condition and past sale prices, then matches the past sales against Land Registry to identify the house number and full postcode, which listings usually hide. The text is parsed in your browser; nothing is fetched from the portals.
+Paste the text of a Zoopla, Rightmove or OnTheMarket listing page (select all, copy) into "Import from a listing". A link on its own cannot be read: the app runs in the browser, and the portals do not let another website open their pages (Zoopla also refuses requests from servers). If a link is pasted, the app says so and offers to open the listing so its text can be copied. The tool reads the asking price, street, bedrooms, type, date listed, EPC, heating, condition and past sale prices, then matches the past sales against Land Registry to identify the house number and full postcode, which listings usually hide. The text is parsed in your browser; nothing is fetched from the portals.
 
 ## Floor areas
 

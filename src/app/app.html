@@ -49,15 +49,18 @@
     <section class="-mx-4 -mt-4 rounded-t-2xl border-b border-line bg-brand-soft/60 p-4 sm:-mx-6 sm:-mt-6 sm:p-6">
       <h2 class="group-title text-brand!"><app-icon name="arrow" [size]="15" />Import from a listing</h2>
       <div class="flex flex-col gap-3">
-        <p class="hint text-ink!">Open the listing on Zoopla, Rightmove or OnTheMarket, select all, copy, and paste it here. The form fills itself in.</p>
-        <textarea id="listingText" class="input bg-surface!" rows="3" placeholder="Paste the whole listing page here" [value]="listingText()" (input)="listingText.set(text($event))" aria-label="Pasted listing text"></textarea>
+        <p class="hint text-ink!">Open the listing on Zoopla, Rightmove or OnTheMarket, select the whole page, copy it, and paste the text here. The form fills itself in. <b>A link on its own will not work:</b> those sites do not let other websites open their pages.</p>
+        <textarea id="listingText" class="input bg-surface!" rows="3" placeholder="Paste the text of the whole listing page here (not the link)" [value]="listingText()" (input)="listingText.set(text($event))" aria-label="Pasted listing text"></textarea>
         <button type="button" class="btn-primary h-10! text-[14px]!" [disabled]="importBusy() || !listingText().trim()" (click)="importListing()"><app-icon name="search" [size]="16" />{{ importBusy() ? 'Finding the house…' : 'Read listing' }}</button>
         @if (importFound().length) {
           <div class="flex flex-wrap gap-1.5">
             @for (f of importFound(); track f) { <span class="pill bg-surface text-ink">{{ f }}</span> }
           </div>
         }
-        @if (importNote()) { <p class="text-[13px] leading-snug font-medium">{{ importNote() }}</p> }
+        @if (importNote()) { <p class="text-[13px] leading-snug font-medium" role="status">{{ importNote() }}</p> }
+        @if (importLink(); as href) {
+          <a class="btn-ghost h-10! self-start bg-surface! text-[14px]! no-underline" [href]="href" target="_blank" rel="noopener noreferrer"><app-icon name="arrow" [size]="15" />Open the listing to copy it</a>
+        }
         @if (importPostcodes().length > 1) {
           <div class="flex flex-wrap gap-1.5" role="group" aria-label="Postcodes on this street">
             @for (o of importPostcodes(); track o.postcode) {
@@ -96,6 +99,7 @@
               <button type="button" role="radio" class="chip" [class.on]="inputs().propertyType === t.key" [attr.aria-checked]="inputs().propertyType === t.key" (click)="set('propertyType', t.key)">{{ t.label }}</button>
             }
           </div>
+          @if (typeNote()) { <p class="hint font-medium text-ink" role="status">{{ typeNote() }}</p> }
         </div>
         <div class="flex gap-3">
           <label class="field"><span>Bedrooms</span>
@@ -371,14 +375,26 @@
 
             @if (value(); as v) {
               <app-value-bar [low]="v.low" [mid]="v.mid" [high]="v.high" [open]="l.open" [target]="l.target" [ceiling]="l.ceiling" [asking]="inputs().asking" />
-              <p class="text-[15px]">Nearby sales put this house at <b>{{ gbp(v.low) }} to {{ gbp(v.high) }}</b>, middle {{ gbp(v.mid) }}.
+              <p class="text-[15px]">
+                @if (v.basis === 'ownSale') { This house's own sale on {{ day(v.own!.date) }} puts it at }
+                @else if (v.own) { Nearby sales and this house's own sale on {{ day(v.own.date) }} put it at }
+                @else { Nearby sales put this house at }
+                <b>{{ gbp(v.low) }} to {{ gbp(v.high) }}</b>, middle {{ gbp(v.mid) }}.
                 @switch (stance()) {
-                  @case ('above') { The asking price is <b class="text-ask">above the range</b> those sales support. }
+                  @case ('above') { The asking price is <b class="text-ask">above the range</b> the evidence supports. }
                   @case ('top') { The asking price sits in the <b>upper part</b> of that range. }
                   @case ('fair') { The asking price is <b>inside</b> that range. }
                   @case ('below') { The asking price is <b>below the low end</b>. Find out why before treating it as a bargain. }
                 }
               </p>
+              @if (v.own; as o) {
+                @if (evidenceGap(); as gap) {
+                  <div class="callout"><app-icon name="alert" /><p><b>Nearby sales and this house disagree.</b> Nearby sales alone say about {{ gbp(v.compsMid) }}, but this house itself sold for {{ gbp(o.paid) }} on {{ day(o.date) }}@if (o.movePct !== null && round1(o.movePct) !== 0) { ({{ gbp(o.indexed) }} at today's prices)}. That is {{ abs(gap).toFixed(0) }}% {{ gap < 0 ? 'more' : 'less' }} than the nearby sales, so they are probably not like for like: a different size, style or condition. The house's own sale carries {{ (o.weight * 100).toFixed(0) }}% of the value. <a href="#comps">Untick the sales that are not similar</a>, and enter the floor area, to bring the two closer.</p></div>
+                }
+                @if (v.basis === 'ownSale') {
+                  <div class="callout"><app-icon name="alert" /><p><b>Based on this house's own sale only.</b> Fewer than three comparable sales are ticked, so the range is 5% either side of what this house sold for@if (o.movePct !== null) {, moved to today's prices}. Tick more sales below, turn on "Wider search area", or use more months, to check it against the neighbours.</p></div>
+                }
+              }
               @if (v.basis === 'sizeAdjusted') {
                 <div class="callout"><app-icon name="alert" /><p>
                   @if (areaAssumed()) {
@@ -402,10 +418,10 @@
               </p>
             }
           } @else {
-            <div class="callout"><app-icon name="alert" /><p>Fewer than three comparable sales are ticked, so no value range can be calculated. Tick more sales below, turn on "Wider search area", or use more months.</p></div>
+            <div class="callout"><app-icon name="alert" /><p>Fewer than three comparable sales are ticked, and this house has no recent sale of its own on record, so no value range can be calculated. Tick more sales below, turn on "Wider search area", or use more months.</p></div>
           }
         </div>
-        <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Maximum:</b> the middle value; above it the nearby sales no longer support the price. None goes above the asking price.</p>
+        <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Maximum:</b> the middle value; above it the evidence no longer supports the price. None goes above the asking price. When this house has itself sold in the last few years, that sale counts for more than the neighbours' sales.</p>
       </article>
 
       <!-- Key figures -->
@@ -526,7 +542,9 @@
           <div class="flex flex-col gap-3">
             <div class="scroll-x"><table class="tbl">
               <tr><th>Step</th><th class="n">Figure</th></tr>
-              @if (v.basis === 'perM2') {
+              @if (v.basis === 'ownSale') {
+                <!-- no nearby sales to show -->
+              } @else if (v.basis === 'perM2') {
                 <tr><td>Median of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }} per m²</td></tr>
                 <tr><td>× floor area of {{ areaUsed() }} m²{{ areaAssumed() ? ' (assumed from bedrooms)' : '' }}</td><td class="n">{{ gbp(v.q[1] * (areaUsed() ?? 0)) }}</td></tr>
               } @else {
@@ -535,14 +553,33 @@
                   <tr><td class="whitespace-normal!">Size: {{ areaUsed() }} m²{{ areaAssumed() ? ' (assumed from bedrooms)' : '' }} against a typical {{ v.typicalArea }} m²</td><td class="n" [class]="v.sizeFactor < 1 ? 'text-bad' : 'text-brand'">{{ signedPct(round1((v.sizeFactor - 1) * 100)) }}</td></tr>
                 }
               }
-              @for (f of factors(); track f.label) {
+              @for (f of v.basis === 'ownSale' ? [] : factors(); track f.label) {
                 <tr><td class="whitespace-normal!">{{ f.label }}</td><td class="n" [class]="f.pct < 0 ? 'text-bad' : 'text-brand'">{{ signedPct(f.pct) }}</td></tr>
               }
-              <tr><td>Total adjustment</td><td class="n font-semibold">{{ signedPct(v.adjustPct) }}</td></tr>
-              <tr><td>Low (lower quartile)</td><td class="n">{{ gbp(v.low) }}</td></tr>
+              @if (v.basis !== 'ownSale') {
+                <tr><td>Total adjustment</td><td class="n font-semibold">{{ signedPct(v.adjustPct) }}</td></tr>
+              }
+              @if (v.own; as o) {
+                @if (v.compsMid !== null) {
+                  <tr><td>Middle from nearby sales alone</td><td class="n">{{ gbp(v.compsMid) }}</td></tr>
+                }
+                <tr><td class="whitespace-normal!">This house sold on {{ day(o.date) }}</td><td class="n">{{ gbp(o.paid) }}</td></tr>
+                @if (o.movePct !== null) {
+                  <tr><td class="whitespace-normal!">Local prices since then (UK House Price Index): {{ signedPct(round1(o.movePct)) }}</td><td class="n">{{ gbp(o.indexed) }}</td></tr>
+                } @else {
+                  <tr><td class="whitespace-normal!">No local price index for that month yet, so the sale price is used as it stands</td><td class="n">{{ gbp(o.indexed) }}</td></tr>
+                }
+                @if (v.compsMid !== null) {
+                  <tr><td class="whitespace-normal!">Weight on this house's own sale ({{ o.years.toFixed(1) }} years old)</td><td class="n">{{ (o.weight * 100).toFixed(0) }}%</td></tr>
+                }
+              }
+              <tr><td>Low{{ v.basis === 'ownSale' ? ' (5% under)' : v.own ? '' : ' (lower quartile)' }}</td><td class="n">{{ gbp(v.low) }}</td></tr>
               <tr class="hl"><td>Middle</td><td class="n">{{ gbp(v.mid) }}</td></tr>
-              <tr><td>High (upper quartile)</td><td class="n">{{ gbp(v.high) }}</td></tr>
+              <tr><td>High{{ v.basis === 'ownSale' ? ' (5% over)' : v.own ? '' : ' (upper quartile)' }}</td><td class="n">{{ gbp(v.high) }}</td></tr>
             </table></div>
+            @if (v.own) {
+              <p class="hint">A recent sale of the house itself is the best evidence of its value. It counts for 90% if it sold today, falling 12 points for each year since, and not at all after 7.5 years. The range narrows the same way: as wide as the spread in nearby sales when they carry the value, down to 5% either side when the house's own sale does. The condition adjustments apply to the nearby sales only: the price this house sold for already reflects the house.</p>
+            }
             <p class="hint">The adjustment percentages are rules of thumb. Change the condition answers, or set your own adjustment under "Costs and search settings".</p>
           </div>
         </article>

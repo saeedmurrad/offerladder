@@ -27,11 +27,11 @@ jobs:
       - run: npx ng test --watch=false
       - run: npx ng build --base-href "/${{ github.event.repository.name }}/"
       - name: Single-page fallback
-        run: cp dist/property-offer-analyser/browser/index.html dist/property-offer-analyser/browser/404.html
+        run: cp dist/offerladder/browser/index.html dist/offerladder/browser/404.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist/property-offer-analyser/browser
+          path: dist/offerladder/browser
 
   deploy:
     needs: build

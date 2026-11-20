@@ -6,7 +6,7 @@
   },
   "newProjectRoot": "projects",
   "projects": {
-    "property-offer-analyser": {
+    "offerladder": {
       "projectType": "application",
       "schematics": {},
       "root": "",
@@ -56,10 +56,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "property-offer-analyser:build:production"
+              "buildTarget": "offerladder:build:production"
             },
             "development": {
-              "buildTarget": "property-offer-analyser:build:development"
+              "buildTarget": "offerladder:build:development"
             }
           },
           "defaultConfiguration": "development"

@@ -1,5 +1,7 @@
 import { offerLadder, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
-import { Comp, DEFAULT_INPUTS, Inputs, Sale } from './models';
+import { compare } from './compare';
+import { GLOSSARY } from './glossary';
+import { Comp, DEFAULT_INPUTS, Inputs, Sale, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
 
 const comp = (price: number, m2: number | null, paon = '1', postcode = 'PE1 2QG'): Comp => ({
@@ -64,7 +66,12 @@ describe('valuation and offer ladder', () => {
   });
 
   it('falls back to prices when floor areas are missing, and needs three comparables', () => {
-    expect(valuation(comps.map((c) => ({ ...c, m2: null })), 71, 0)!.basis).toBe('price');
+    const bare = comps.map((c) => ({ ...c, m2: null }));
+    expect(valuation(bare, null, 0)!.basis).toBe('price');
+    const scaled = valuation(bare, 71, 0, 'terraced')!;
+    expect(scaled.basis).toBe('sizeAdjusted');
+    expect(scaled.sizeFactor).toBeCloseTo(Math.pow(71 / 83, 0.8), 5);
+    expect(scaled.mid).toBeLessThan(valuation(bare, null, 0)!.mid);
     expect(valuation(comps.slice(0, 2), 71, 0)).toBeNull();
   });
 
@@ -118,5 +125,73 @@ describe('pasted floor areas', () => {
     const { comps, matched } = applyPastedAreas([comp(157_000, null, '328', 'PE1 2LQ'), comp(150_000, null, '22', 'PE1 2QG'), comp(1, null, '9', 'PE1 2QG')], pasted);
     expect(matched).toBe(2);
     expect(comps.map((c) => c.m2)).toEqual([71, 66, null]);
+  });
+});
+
+describe('comparison', () => {
+  const snap = (id: string, over: Partial<Snapshot>, inputs: Partial<Inputs> = {}): Snapshot => ({
+    id,
+    label: id,
+    savedAt: '2026-11-20T00:00:00Z',
+    inputs: { ...DEFAULT_INPUTS, asking: 150_000, floorArea: 70, ...inputs },
+    district: 'Test',
+    basis: 'perM2',
+    low: 130_000,
+    mid: 140_000,
+    high: 150_000,
+    open: 124_000,
+    target: 135_000,
+    ceiling: 140_000,
+    adjustPct: 0,
+    compsUsed: 8,
+    netYieldAtTarget: 5,
+    netIncome: 7_000,
+    cashAtTarget: 145_000,
+    daysListed: 30,
+    sellerPaid: null,
+    sellerYears: null,
+    crimeTotal: 500,
+    floodAreas: 0,
+    hpiChangePct: -1,
+    stationM: 800,
+    ...over,
+  });
+
+  it('needs at least two houses', () => {
+    expect(compare([snap('a', {})])).toBeNull();
+  });
+
+  it('picks the house that is cheaper against its value and yields more', () => {
+    const a = snap('a', { netYieldAtTarget: 5.5, crimeTotal: 400 }, { asking: 139_000 });
+    const b = snap('b', { netYieldAtTarget: 4.5, crimeTotal: 600 }, { asking: 160_000 });
+    const r = compare([a, b])!;
+    expect(r.pick).toBe(0);
+    expect(r.totals[0]).toBeGreaterThan(r.totals[1]);
+    expect(r.reasons.some((x) => x.startsWith('Best price against nearby sales'))).toBe(true);
+  });
+
+  it('leaves out a measure when a house lacks the figure, and flags rough valuations', () => {
+    const a = snap('a', { netYieldAtTarget: null, basis: 'price' });
+    const b = snap('b', { crimeTotal: 300 });
+    const r = compare([a, b])!;
+    expect(r.results.find((x) => x.criterion.key === 'yield')!.scored).toBe(false);
+    expect(r.weightUsed).toBeLessThan(100);
+    expect(r.roughValuation).toBe(true);
+    expect(r.pick).toBe(1);
+  });
+
+  it('handles three houses and reports a close call by margin', () => {
+    const r = compare([snap('a', {}), snap('b', { daysListed: 31 }), snap('c', { daysListed: 29 })])!;
+    expect(r.totals).toHaveLength(3);
+    expect(r.pick).toBe(1);
+  });
+});
+
+describe('glossary', () => {
+  it('has unique terms, each with a meaning', () => {
+    const names = GLOSSARY.map((t) => t.term);
+    expect(new Set(names).size).toBe(names.length);
+    expect(GLOSSARY.every((t) => t.meaning.length > 20)).toBe(true);
+    expect(names).toContain('EPC rating');
   });
 });

@@ -5,6 +5,7 @@ import {
   askingStance,
   daysOnMarket,
   isSubject,
+  normaliseHouse,
   localTrend,
   maxPriceForYield,
   offerLadder,
@@ -15,13 +16,27 @@ import {
   TAX,
   valuation,
 } from './engine';
-import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode } from './models';
+import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode, Snapshot } from './models';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { CompareView } from './ui/compare-view';
+import { GlossaryView } from './ui/glossary-view';
 import { Icon } from './ui/icon';
 import { ValueBar } from './ui/value-bar';
 
 const STORE_KEY = 'property-offer-analyser.inputs.v1';
 const THEME_KEY = 'property-offer-analyser.theme';
+const SAVED_KEY = 'property-offer-analyser.saved.v1';
+const MAX_SAVED = 3;
+type View = 'analyse' | 'compare' | 'glossary';
+
+function loadSaved(): Snapshot[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]');
+    return Array.isArray(list) ? list.slice(0, MAX_SAVED) : [];
+  } catch {
+    return [];
+  }
+}
 type Theme = 'light' | 'dark';
 
 function loadTheme(): Theme | null {
@@ -45,7 +60,7 @@ function loadInputs(): Inputs {
 
 @Component({
   selector: 'app-root',
-  imports: [Icon, ValueBar],
+  imports: [Icon, ValueBar, CompareView, GlossaryView],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
@@ -63,6 +78,14 @@ export class App {
   readonly pasteText = signal('');
   readonly pasteNote = signal('');
   readonly taxCheckedOn = TAX.checkedOn;
+  readonly view = signal<View>('analyse');
+  readonly saved = signal<Snapshot[]>(loadSaved());
+  readonly saveNote = signal('');
+  readonly views: { key: View; label: string }[] = [
+    { key: 'analyse', label: 'Analyse' },
+    { key: 'compare', label: 'Compare' },
+    { key: 'glossary', label: 'Glossary' },
+  ];
   readonly theme = signal<Theme | null>(loadTheme());
   readonly isDark = computed(() => this.theme() === 'dark' || (this.theme() === null && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
 
@@ -98,6 +121,13 @@ export class App {
       }
     });
     effect(() => {
+      try {
+        localStorage.setItem(SAVED_KEY, JSON.stringify(this.saved()));
+      } catch {
+        /* storage unavailable: the shortlist lasts for this visit only */
+      }
+    });
+    effect(() => {
       const t = this.theme();
       if (t) document.documentElement.dataset['theme'] = t;
       else delete document.documentElement.dataset['theme'];
@@ -109,6 +139,78 @@ export class App {
     });
   }
 
+  // ---- comparison shortlist ----
+  readonly currentId = computed(() => {
+    const g = this.geo();
+    return g ? `${g.postcode}|${normaliseHouse(this.inputs().houseNumber)}` : '';
+  });
+  readonly isSaved = computed(() => this.saved().some((s) => s.id === this.currentId()));
+
+  /** Freeze the current analysis and add it to the comparison (or update it if already there). */
+  saveCurrent(): void {
+    const g = this.geo();
+    const v = this.value();
+    const l = this.ladder();
+    if (!g || !v || !l) return;
+    const i = this.inputs();
+    const atTarget = rentalReturns(l.target, i.rentPcm ?? 0, i);
+    const seller = this.seller();
+    const a = this.area();
+    const name = [i.houseNumber, i.street].filter(Boolean).join(' ');
+    const snap: Snapshot = {
+      id: this.currentId(),
+      label: name ? `${name}, ${g.postcode}` : g.postcode,
+      savedAt: new Date().toISOString(),
+      inputs: { ...i },
+      district: g.district,
+      basis: v.basis,
+      low: v.low,
+      mid: v.mid,
+      high: v.high,
+      open: l.open,
+      target: l.target,
+      ceiling: l.ceiling,
+      adjustPct: v.adjustPct,
+      compsUsed: v.count,
+      netYieldAtTarget: i.rentPcm ? atTarget.netYield : null,
+      netIncome: i.rentPcm ? atTarget.netIncome : null,
+      cashAtTarget: i.useMortgage ? atTarget.cashInMortgage : atTarget.cashIn,
+      daysListed: this.daysListed(),
+      sellerPaid: seller?.paid ?? null,
+      sellerYears: seller?.yearsHeld ?? null,
+      crimeTotal: a?.crime?.total ?? null,
+      floodAreas: a?.flood ? a.flood.areas.length : null,
+      hpiChangePct: a?.hpi?.annualChangePct ?? null,
+      stationM: a?.amenities?.station?.distanceM ?? null,
+    };
+    const list = this.saved();
+    const at = list.findIndex((s) => s.id === snap.id);
+    if (at >= 0) {
+      this.saved.set(list.map((s, n) => (n === at ? snap : s)));
+      this.saveNote.set('Comparison updated with the current figures.');
+    } else if (list.length >= MAX_SAVED) {
+      this.saveNote.set(`${MAX_SAVED} houses are already saved. Remove one on the Compare tab first.`);
+    } else {
+      this.saved.set([...list, snap]);
+      this.saveNote.set(list.length + 1 >= 2 ? `Saved. ${list.length + 1} houses are ready to compare.` : 'Saved. Analyse another house and add it to compare the two.');
+    }
+  }
+
+  openSaved(s: Snapshot): void {
+    this.inputs.set({ ...DEFAULT_INPUTS, ...s.inputs });
+    this.go('analyse');
+    void this.analyse();
+  }
+
+  removeSaved(id: string): void {
+    this.saved.update((list) => list.filter((s) => s.id !== id));
+  }
+
+  go(view: View): void {
+    this.view.set(view);
+    window.scrollTo({ top: 0 });
+  }
+
   toggleTheme(): void {
     this.theme.set(this.isDark() ? 'light' : 'dark');
   }
@@ -117,7 +219,8 @@ export class App {
   readonly trend = computed(() => localTrend(this.nearbySales(), this.inputs().propertyType));
   readonly factors = computed(() => adjustmentFactors(this.inputs(), this.trend()));
   readonly adjustPct = computed(() => this.factors().reduce((sum, f) => sum + f.pct, 0));
-  readonly value = computed(() => valuation(this.comps(), this.inputs().floorArea, this.adjustPct()));
+  readonly value = computed(() => valuation(this.comps(), this.inputs().floorArea, this.adjustPct(), this.inputs().propertyType));
+  readonly areaLoading = signal(false);
   readonly ladder = computed(() => {
     const v = this.value();
     return v ? offerLadder(v, this.inputs().asking) : null;
@@ -137,7 +240,7 @@ export class App {
     const l = this.ladder();
     const asking = this.inputs().asking;
     const points: { label: string; price: number }[] = [];
-    if (l) points.push({ label: 'Open', price: l.open }, { label: 'Target', price: l.target }, { label: 'Ceiling', price: l.ceiling });
+    if (l) points.push({ label: 'Open', price: l.open }, { label: 'Target', price: l.target }, { label: 'Maximum', price: l.ceiling });
     if (asking) points.push({ label: 'Asking', price: asking });
     return points;
   });
@@ -189,6 +292,7 @@ export class App {
     }
     this.status.set('loading');
     this.error.set('');
+    this.saveNote.set('');
     try {
       const geo = await this.data.lookupPostcode(i.postcode);
       if (geo.country !== 'England' && geo.country !== 'Wales') {
@@ -197,16 +301,34 @@ export class App {
       const nearby = await this.data.nearbyPostcodes(geo, i.wideSearch);
       const since = new Date();
       since.setMonth(since.getMonth() - i.monthsBack);
-      const [sales, own, area] = await Promise.all([
-        this.data.sales(nearby, since.toISOString().slice(0, 10)),
-        this.data.sales(new Map([[geo.postcode, 0]]), null),
-        this.data.area(geo),
-      ]);
+      const [sales, own] = await Promise.all([this.data.sales(nearby, since.toISOString().slice(0, 10)), this.data.sales(new Map([[geo.postcode, 0]]), null)]);
+      // Area context loads in the background so a slow source never holds up the offer.
+      this.area.set(null);
+      this.areaLoading.set(true);
+      void this.data.area(geo).then((area) => {
+        if (this.geo()?.postcode !== geo.postcode) return;
+        this.area.set(area);
+        this.areaLoading.set(false);
+        // A house saved before its area data arrived gets those figures filled in.
+        const id = this.currentId();
+        this.saved.update((list) =>
+          list.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  crimeTotal: area.crime?.total ?? null,
+                  floodAreas: area.flood ? area.flood.areas.length : null,
+                  hpiChangePct: area.hpi?.annualChangePct ?? null,
+                  stationM: area.amenities?.station?.distanceM ?? null,
+                }
+              : s,
+          ),
+        );
+      });
       this.geo.set(geo);
       this.set('postcode', geo.postcode);
       this.nearbySales.set(sales);
       this.history.set(own.filter((s) => isSubject(s, i.houseNumber, geo.postcode)));
-      this.area.set(area);
       this.rebuildComps();
       this.pasteNote.set('');
       this.status.set('done');
@@ -305,6 +427,12 @@ export class App {
   pct(n: number | null | undefined, digits = 1): string {
     if (n === null || n === undefined || !Number.isFinite(n)) return 'n/a';
     return `${n.toFixed(digits)}%`;
+  }
+  round1(n: number): number {
+    return Math.round(n * 10) / 10;
+  }
+  abs(n: number): number {
+    return Math.abs(n);
   }
   signedPct(n: number): string {
     return `${n > 0 ? '+' : ''}${n}%`;

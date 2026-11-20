@@ -1,10 +1,11 @@
 import { Injectable } from '@angular/core';
-import { AreaData, CrimeSummary, FloodSummary, Geo, PropertyType, Sale } from './models';
+import { Amenities, AreaData, CrimeSummary, FloodSummary, Geo, Hpi, PropertyType, Sale } from './models';
 
 const POSTCODES = 'https://api.postcodes.io';
 const LAND_REGISTRY = 'https://landregistry.data.gov.uk/landregistry/query';
 const POLICE = 'https://data.police.uk/api';
 const FLOOD = 'https://environment.data.gov.uk/flood-monitoring/id/floodAreas';
+const OVERPASS = 'https://overpass-api.de/api/interpreter';
 
 const TYPE_MAP: Record<string, PropertyType> = {
   terraced: 'terraced',
@@ -29,6 +30,7 @@ export class DataService {
       lng: r.longitude,
       ward: r.admin_ward ?? '',
       district: r.admin_district ?? '',
+      districtCode: r.codes?.admin_district ?? '',
       country: r.country ?? '',
       lsoa: r.lsoa ?? '',
       lsoaCode: r.codes?.lsoa ?? '',
@@ -98,10 +100,74 @@ export class DataService {
     }));
   }
 
-  /** Crime and flood are useful context, not essentials: a failure here must not block the report. */
+  /** Area context is useful, not essential: a failure in any one source must not block the report. */
   async area(geo: Geo): Promise<AreaData> {
-    const [crime, flood] = await Promise.all([this.crime(geo).catch(() => null), this.flood(geo).catch(() => null)]);
-    return { crime, flood };
+    const [crime, flood, hpi, amenities] = await Promise.all([
+      // each source fails on its own without affecting the others
+      this.crime(geo).catch(() => null),
+      this.flood(geo).catch(() => null),
+      this.hpi(geo).catch(() => null),
+      this.amenities(geo).catch(() => null),
+    ]);
+    return { crime, flood, hpi, amenities };
+  }
+
+  /** Latest UK House Price Index figures for the council area, matched by its official area code. */
+  private async hpi(geo: Geo): Promise<Hpi | null> {
+    if (!/^[EW]\d{8}$/.test(geo.districtCode)) return null;
+    const query = `
+      PREFIX ukhpi: <http://landregistry.data.gov.uk/def/ukhpi/>
+      PREFIX owl: <http://www.w3.org/2002/07/owl#>
+      SELECT ?month ?avg ?chg ?terr ?semi ?det ?flat WHERE {
+        ?region owl:sameAs <http://statistics.data.gov.uk/id/statistical-geography/${geo.districtCode}> .
+        ?obs ukhpi:refRegion ?region ; ukhpi:refMonth ?month ; ukhpi:averagePrice ?avg .
+        OPTIONAL { ?obs ukhpi:percentageAnnualChange ?chg }
+        OPTIONAL { ?obs ukhpi:averagePriceTerraced ?terr }
+        OPTIONAL { ?obs ukhpi:averagePriceSemiDetached ?semi }
+        OPTIONAL { ?obs ukhpi:averagePriceDetached ?det }
+        OPTIONAL { ?obs ukhpi:averagePriceFlatMaisonette ?flat }
+      } ORDER BY DESC(?month) LIMIT 1`;
+    const res = await fetch(LAND_REGISTRY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/sparql-results+json' },
+      body: 'query=' + encodeURIComponent(query),
+    });
+    if (!res.ok) return null;
+    const r = ((await res.json()).results.bindings as Record<string, { value: string }>[])[0];
+    if (!r) return null;
+    const n = (k: string) => (r[k] ? Number(r[k].value) : undefined);
+    const byType: Hpi['byType'] = {};
+    if (n('terr')) byType['terraced'] = n('terr');
+    if (n('semi')) byType['semi-detached'] = n('semi');
+    if (n('det')) byType['detached'] = n('det');
+    if (n('flat')) byType['flat-maisonette'] = n('flat');
+    return { month: r['month'].value.slice(0, 7), average: Number(r['avg'].value), annualChangePct: n('chg') ?? null, byType };
+  }
+
+  /** Nearest railway station within 3 km, and schools and supermarkets within 1 km. The public server is often busy, so give up after 8 seconds. */
+  private async amenities(geo: Geo): Promise<Amenities | null> {
+    const at = `${geo.lat},${geo.lng}`;
+    const q = `[out:json][timeout:5];(node(around:3000,${at})[railway=station];nwr(around:1000,${at})[amenity=school];nwr(around:1000,${at})[shop=supermarket];);out center tags 120;`;
+    const res = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return null;
+    type El = { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> };
+    const els = ((await res.json()).elements ?? []) as El[];
+    let station: Amenities['station'] = null;
+    let schools = 0;
+    let supermarkets = 0;
+    for (const e of els) {
+      const t = e.tags ?? {};
+      if (t['amenity'] === 'school') schools++;
+      else if (t['shop'] === 'supermarket') supermarkets++;
+      else if (t['railway'] === 'station') {
+        const lat = e.lat ?? e.center?.lat;
+        const lon = e.lon ?? e.center?.lon;
+        if (lat === undefined || lon === undefined) continue;
+        const d = Math.round(distanceM(geo.lat, geo.lng, lat, lon));
+        if (!station || d < station.distanceM) station = { name: t['name'] ?? 'Railway station', distanceM: d };
+      }
+    }
+    return { station, schools, supermarkets };
   }
 
   private async crime(geo: Geo): Promise<CrimeSummary | null> {

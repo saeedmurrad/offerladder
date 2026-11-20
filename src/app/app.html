@@ -5,18 +5,39 @@
       <span class="truncate font-display text-[16px] font-extrabold tracking-tight">Property Offer Analyser</span>
       <span class="hidden rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-semibold text-brand sm:inline">England &amp; Wales</span>
     </a>
+    <nav class="hidden items-center gap-1 rounded-xl border border-line bg-sunken p-1 md:flex" aria-label="Main">
+      @for (v of views; track v.key) {
+        <button type="button" class="rounded-lg px-3.5 py-1.5 text-[13.5px] font-semibold transition" [class]="view() === v.key ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'" [attr.aria-current]="view() === v.key ? 'page' : null" (click)="go(v.key)">
+          {{ v.label }}@if (v.key === 'compare' && saved().length) { <span class="ml-1 rounded-full bg-brand px-1.5 py-0.5 text-[10.5px] font-bold text-brand-ink">{{ saved().length }}</span> }
+        </button>
+      }
+    </nav>
     <div class="flex shrink-0 items-center gap-2">
-      <a class="btn-ghost hidden sm:inline-flex" href="https://github.com/saeedmurrad/property-offer-analyser" target="_blank" rel="noopener"><app-icon name="code" [size]="16" />Source</a>
+      <a class="btn-ghost hidden lg:inline-flex" href="https://github.com/saeedmurrad/property-offer-analyser" target="_blank" rel="noopener"><app-icon name="code" [size]="16" />Source</a>
       <button type="button" class="btn-icon" (click)="toggleTheme()" [attr.aria-label]="isDark() ? 'Switch to light theme' : 'Switch to dark theme'">
         <app-icon [name]="isDark() ? 'sun' : 'moon'" [size]="18" />
       </button>
     </div>
   </div>
+  <nav class="flex border-t border-line md:hidden" aria-label="Main">
+    @for (v of views; track v.key) {
+      <button type="button" class="flex-1 border-b-2 py-2.5 text-[13.5px] font-semibold" [class]="view() === v.key ? 'border-brand text-brand' : 'border-transparent text-muted'" [attr.aria-current]="view() === v.key ? 'page' : null" (click)="go(v.key)">
+        {{ v.label }}@if (v.key === 'compare' && saved().length) { <span class="ml-1 rounded-full bg-brand px-1.5 py-0.5 text-[10.5px] font-bold text-brand-ink">{{ saved().length }}</span> }
+      </button>
+    }
+  </nav>
 </header>
 
-<main class="mx-auto grid max-w-7xl grid-cols-1 items-start gap-5 px-4 pt-5 pb-28 sm:px-6 lg:grid-cols-[380px_minmax(0,1fr)] lg:gap-6 lg:pb-16">
+<main class="mx-auto grid max-w-7xl grid-cols-1 items-start gap-5 px-4 pt-5 pb-28 sm:px-6 lg:gap-6 lg:pb-16" [class]="view() === 'analyse' ? 'lg:grid-cols-[380px_minmax(0,1fr)]' : 'max-w-5xl!'">
+  @if (view() === 'compare') {
+    <app-compare-view [saved]="saved()" (open)="openSaved($event)" (remove)="removeSaved($event)" (goAnalyse)="go('analyse')" />
+  }
+  @if (view() === 'glossary') {
+    <app-glossary-view />
+  }
+
   <!-- ============ INPUT ============ -->
-  <form id="deal-form" class="card card-pad flex flex-col gap-6 print:hidden" (submit)="analyse($event)" autocomplete="off">
+  <form id="deal-form" class="card card-pad flex flex-col gap-6 print:hidden" [hidden]="view() !== 'analyse'" (submit)="analyse($event)" autocomplete="off">
     <section>
       <h2 class="group-title"><app-icon name="home" [size]="15" />The house</h2>
       <div class="flex flex-col gap-3">
@@ -212,7 +233,7 @@
   </form>
 
   <!-- ============ REPORT ============ -->
-  <section id="report" class="flex min-w-0 flex-col gap-5" aria-live="polite">
+  <section id="report" class="flex min-w-0 flex-col gap-5" [hidden]="view() !== 'analyse'" aria-live="polite">
     @if (status() === 'idle') {
       <div class="card overflow-hidden">
         <div class="bg-brand-soft p-5 sm:p-8">
@@ -288,8 +309,16 @@
                 <span class="pill">{{ g.district }}</span>
               </div>
             </div>
-            <button type="button" class="btn-ghost print:hidden" (click)="print()"><app-icon name="printer" [size]="16" />Print / PDF</button>
+            <div class="flex flex-wrap gap-2 print:hidden">
+              @if (ladder()) {
+                <button type="button" class="btn-ghost" [class]="isSaved() ? 'border-brand! text-brand!' : ''" (click)="saveCurrent()"><app-icon [name]="isSaved() ? 'check' : 'rows'" [size]="16" />{{ isSaved() ? 'Update comparison' : 'Add to comparison' }}</button>
+              }
+              <button type="button" class="btn-ghost" (click)="print()"><app-icon name="printer" [size]="16" />Print / PDF</button>
+            </div>
           </div>
+          @if (saveNote()) {
+            <p class="flex flex-wrap items-center gap-x-2 rounded-lg bg-brand-soft px-3 py-2 text-[13.5px] font-medium text-brand print:hidden">{{ saveNote() }} @if (saved().length >= 2) { <button type="button" class="cursor-pointer font-bold underline underline-offset-2" (click)="go('compare')">Open Compare</button> }</p>
+          }
 
           @if (ladder(); as l) {
             <div class="grid grid-cols-3 gap-2 sm:gap-3">
@@ -304,7 +333,7 @@
                 <small class="text-[11.5px] opacity-85">{{ vsAsking(l.target) }}</small>
               </div>
               <div class="flex min-w-0 flex-col gap-0.5 rounded-xl border border-line bg-sunken p-2.5 sm:p-4">
-                <span class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-muted uppercase"><i class="size-2.5 rounded-full bg-ink"></i>Stop at</span>
+                <span class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-muted uppercase"><i class="size-2.5 rounded-full bg-ink"></i>Maximum</span>
                 <b class="font-display text-[clamp(15px,4.4vw,19px)] font-extrabold tracking-tight tabular-nums sm:text-[28px]">{{ gbp(l.ceiling) }}</b>
                 <small class="text-[11.5px] text-muted">{{ vsAsking(l.ceiling) }}</small>
               </div>
@@ -320,8 +349,11 @@
                   @case ('below') { The asking price is <b>below the low end</b>. Find out why before treating it as a bargain. }
                 }
               </p>
+              @if (v.basis === 'sizeAdjusted') {
+                <div class="callout"><app-icon name="alert" /><p><b>Estimate.</b> Land Registry does not record size, so nearby sale prices were scaled to this house's {{ inputs().floorArea }} m² against a typical {{ v.typicalArea }} m² for this type. <a href="#comps">Add real floor areas to the comparables</a> for a firmer figure.</p></div>
+              }
               @if (v.basis === 'price') {
-                <div class="callout"><app-icon name="alert" /><p><b>Rough estimate.</b> This compares sale prices only, so bigger and smaller houses are mixed together. <a href="#comps">Add floor areas to the comparables</a> to compare like for like.</p></div>
+                <div class="callout"><app-icon name="alert" /><p><b>Rough estimate.</b> This compares sale prices only, so bigger and smaller houses are mixed together. Enter this house's floor area, and <a href="#comps">add floor areas to the comparables</a>, to compare like for like.</p></div>
               }
             }
             @if (yieldPrice(); as y) {
@@ -337,7 +369,7 @@
             <div class="callout"><app-icon name="alert" /><p>Fewer than three comparable sales are ticked, so no value range can be calculated. Tick more sales below, turn on "Wider search area", or use more months.</p></div>
           }
         </div>
-        <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Stop at:</b> the middle value. None goes above the asking price.</p>
+        <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Maximum:</b> the middle value; above it the nearby sales no longer support the price. None goes above the asking price.</p>
       </article>
 
       <!-- Key figures -->
@@ -399,7 +431,7 @@
             @if (trend(); as t) { Median price moved {{ t > 0 ? '+' : '' }}{{ pct(t) }} against the year before. }
           </p>
 
-          <details class="group rounded-xl border border-line bg-sunken print:hidden" [open]="value()?.basis === 'price'">
+          <details class="group rounded-xl border border-line bg-sunken print:hidden" [open]="value()?.basis !== 'perM2'">
             <summary class="flex list-none items-center gap-2 px-4 py-3 text-[14px] font-semibold [&::-webkit-details-marker]:hidden">
               <span class="text-brand"><app-icon name="ruler" [size]="17" /></span>Add floor areas for a like-for-like value
               <span class="ml-auto text-[12px] text-brand group-open:hidden">Show</span><span class="ml-auto hidden text-[12px] text-brand group-open:inline">Hide</span>
@@ -463,6 +495,9 @@
                 <tr><td>× floor area of {{ inputs().floorArea }} m²</td><td class="n">{{ gbp(v.q[1] * (inputs().floorArea ?? 0)) }}</td></tr>
               } @else {
                 <tr><td>Median price of {{ v.count }} comparables</td><td class="n">{{ gbp(v.q[1]) }}</td></tr>
+                @if (v.basis === 'sizeAdjusted') {
+                  <tr><td class="whitespace-normal!">Size: {{ inputs().floorArea }} m² against a typical {{ v.typicalArea }} m²</td><td class="n" [class]="v.sizeFactor < 1 ? 'text-bad' : 'text-brand'">{{ signedPct(round1((v.sizeFactor - 1) * 100)) }}</td></tr>
+                }
               }
               @for (f of factors(); track f.label) {
                 <tr><td class="whitespace-normal!">{{ f.label }}</td><td class="n" [class]="f.pct < 0 ? 'text-bad' : 'text-brand'">{{ signedPct(f.pct) }}</td></tr>
@@ -543,15 +578,27 @@
       <article id="area" class="card card-pad">
         <div class="section-head"><span class="icon-badge"><app-icon name="pin" /></span><h2>The area</h2></div>
         <ul class="list">
+          @if (areaLoading()) { <li class="text-muted">Loading price index, crime, flood and nearby places…</li> }
           <li>{{ g.ward }} ward, {{ g.district }}. Neighbourhood: {{ g.lsoa }}.
             @if (links()?.deprivation) { <a [href]="links()?.deprivation" target="_blank" rel="noopener">Deprivation ranking</a>. }
           </li>
+          @if (area()?.hpi; as h) {
+            <li><b>Official price index:</b> the average home in {{ g.district }} was {{ gbp(h.average) }} in {{ h.month }}@if (h.annualChangePct !== null) {, {{ h.annualChangePct > 0 ? 'up' : 'down' }} <b>{{ pct(abs(h.annualChangePct)) }}</b> on a year earlier}.
+              @if (h.byType[inputs().propertyType]; as typeAvg) { Average for this property type: {{ gbp(typeAvg) }}. }
+            </li>
+          }
+          @if (area()?.amenities; as am) {
+            <li><b>Nearby:</b>
+              @if (am.station; as st) { {{ st.name }} station is {{ (st.distanceM / 1000).toFixed(1) }} km away. } @else { No railway station within 3 km. }
+              {{ am.schools }} school{{ am.schools === 1 ? '' : 's' }} and {{ am.supermarkets }} supermarket{{ am.supermarkets === 1 ? '' : 's' }} within 1 km (OpenStreetMap).
+            </li>
+          }
           @if (area()?.crime; as c) {
             <li><b>{{ c.total }} crimes</b> recorded within one mile in {{ c.month }}. Most common:
               @for (t of c.top; track t.category; let last = $last) { {{ t.category }} ({{ t.count }}){{ last ? '.' : ',' }} }
               A city-centre mile always scores high, so compare with other houses you analyse.
             </li>
-          } @else {
+          } @else if (!areaLoading()) {
             <li>Crime data was not available for this point.</li>
           }
           @if (area()?.flood; as f) {
@@ -581,13 +628,13 @@
     }
 
     <footer class="px-1 text-[12px] leading-relaxed text-muted">
-      Sold prices: HM Land Registry price-paid data, Open Government Licence. Postcodes: postcodes.io. Crime: data.police.uk. Flood areas: Environment Agency. This is a calculation from public records and your own inputs. It is not a survey, a formal valuation or financial advice.
+      Sold prices and price index: HM Land Registry, Open Government Licence. Postcodes: postcodes.io. Crime: data.police.uk. Flood areas: Environment Agency. Nearby places: © OpenStreetMap contributors. This is a calculation from public records and your own inputs. It is not a survey, a formal valuation or financial advice.
     </footer>
   </section>
 </main>
 
 <!-- Phone: the action stays within thumb reach -->
-<div class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur lg:hidden print:hidden">
+<div class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur lg:hidden print:hidden" [hidden]="view() !== 'analyse'">
   <button class="btn-primary w-full" type="submit" form="deal-form" [disabled]="status() === 'loading'">
     <app-icon name="search" [size]="18" />{{ status() === 'loading' ? 'Loading sold prices…' : 'Analyse this house' }}
   </button>

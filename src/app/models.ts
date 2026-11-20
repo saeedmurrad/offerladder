@@ -86,6 +86,7 @@ export interface Geo {
   lng: number;
   ward: string;
   district: string;
+  districtCode: string;
   country: string;
   lsoa: string;
   lsoaCode: string;
@@ -119,7 +120,52 @@ export interface FloodSummary {
   areas: string[];
 }
 
+/** Official UK House Price Index for the council area (HM Land Registry / ONS). */
+export interface Hpi {
+  month: string; // yyyy-mm
+  average: number;
+  annualChangePct: number | null;
+  byType: Partial<Record<PropertyType, number>>;
+}
+
+/** Nearby places from OpenStreetMap. */
+export interface Amenities {
+  station: { name: string; distanceM: number } | null;
+  schools: number;
+  supermarkets: number;
+}
+
 export interface AreaData {
   crime: CrimeSummary | null;
   flood: FloodSummary | null;
+  hpi: Hpi | null;
+  amenities: Amenities | null;
+}
+
+/** One analysed house, frozen at the moment it was added to the comparison. */
+export interface Snapshot {
+  id: string;
+  label: string;
+  savedAt: string;
+  inputs: Inputs;
+  district: string;
+  basis: 'perM2' | 'sizeAdjusted' | 'price';
+  low: number;
+  mid: number;
+  high: number;
+  open: number;
+  target: number;
+  ceiling: number;
+  adjustPct: number;
+  compsUsed: number;
+  netYieldAtTarget: number | null;
+  netIncome: number | null;
+  cashAtTarget: number | null;
+  daysListed: number | null;
+  sellerPaid: number | null;
+  sellerYears: number | null;
+  crimeTotal: number | null;
+  floodAreas: number | null;
+  hpiChangePct: number | null;
+  stationM: number | null;
 }

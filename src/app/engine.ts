@@ -76,8 +76,25 @@ export function adjustmentFactors(i: Inputs, trendPct: number | null): Factor[] 
   return f;
 }
 
+/**
+ * Rough typical internal floor areas in m² by property type in England (English Housing Survey floor-space figures, rounded).
+ * Used only when comparables have no floor areas, to scale their prices to the size of the house being valued.
+ */
+export const TYPICAL_AREA: Record<PropertyType, number> = {
+  terraced: 83,
+  'semi-detached': 96,
+  detached: 150,
+  'flat-maisonette': 60,
+  other: 90,
+};
+/** Price does not rise one-for-one with size: a house 10% bigger sells for roughly 8% more. */
+const SIZE_ELASTICITY = 0.8;
+
 export interface Valuation {
-  basis: 'perM2' | 'price';
+  /** perM2: like for like on real floor areas. sizeAdjusted: prices scaled by a typical floor area. price: prices only. */
+  basis: 'perM2' | 'sizeAdjusted' | 'price';
+  sizeFactor: number;
+  typicalArea: number | null;
   count: number;
   q: [number, number, number]; // quartiles of price or of price per m2
   adjustPct: number;
@@ -86,17 +103,23 @@ export interface Valuation {
   high: number;
 }
 
-export function valuation(comps: Comp[], floorArea: number | null, adjustPct: number): Valuation | null {
+export function valuation(comps: Comp[], floorArea: number | null, adjustPct: number, type: PropertyType = 'terraced'): Valuation | null {
   const used = comps.filter((c) => c.selected);
   if (used.length < 3) return null;
   const withArea = used.filter((c) => c.m2 && c.m2 > 0);
   const k = 1 + adjustPct / 100;
   if (floorArea && floorArea > 0 && withArea.length >= 4) {
     const q = quartiles(withArea.map((c) => c.price / (c.m2 as number)));
-    return { basis: 'perM2', count: withArea.length, q, adjustPct, low: q[0] * floorArea * k, mid: q[1] * floorArea * k, high: q[2] * floorArea * k };
+    return { basis: 'perM2', sizeFactor: 1, typicalArea: null, count: withArea.length, q, adjustPct, low: q[0] * floorArea * k, mid: q[1] * floorArea * k, high: q[2] * floorArea * k };
   }
   const q = quartiles(used.map((c) => c.price));
-  return { basis: 'price', count: used.length, q, adjustPct, low: q[0] * k, mid: q[1] * k, high: q[2] * k };
+  if (floorArea && floorArea > 0) {
+    const typicalArea = TYPICAL_AREA[type];
+    const sizeFactor = Math.min(1.5, Math.max(0.6, Math.pow(floorArea / typicalArea, SIZE_ELASTICITY)));
+    const s = k * sizeFactor;
+    return { basis: 'sizeAdjusted', sizeFactor, typicalArea, count: used.length, q, adjustPct, low: q[0] * s, mid: q[1] * s, high: q[2] * s };
+  }
+  return { basis: 'price', sizeFactor: 1, typicalArea: null, count: used.length, q, adjustPct, low: q[0] * k, mid: q[1] * k, high: q[2] * k };
 }
 
 /** Median price of same-type sales in the last 12 months against the 12 months before. Null if either side has fewer than 15 sales: small samples swing wildly. */

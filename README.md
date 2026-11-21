@@ -31,6 +31,18 @@ It is a static Angular 21 app (standalone components, signals) styled with Tailw
 
 Paste the text of a Zoopla, Rightmove or OnTheMarket listing page (select all, copy) into "Import from a listing". A link on its own cannot be read: the app runs in the browser, and the portals do not let another website open their pages (Zoopla also refuses requests from servers). If a link is pasted, the app says so and offers to open the listing so its text can be copied. The tool reads the asking price, street, bedrooms, type, date listed, EPC, heating, condition and past sale prices, then matches the past sales against Land Registry to identify the house number and full postcode, which listings usually hide. The text is parsed in your browser; nothing is fetched from the portals.
 
+## The "Send to OfferLadder" button
+
+A property site will not let another website open its pages, so a link cannot be read. The buyer's own browser, though, already has the page open. "One-click button for your computer" in the import panel gives a bookmark to drag to the bookmarks bar. Clicked on a Zoopla, Rightmove or OnTheMarket listing, it reads that page (its text, photo addresses, floor plan and the full postcode held in the page's data) and opens OfferLadder with the listing imported and analysed.
+
+- It is the buyer copying the page in one click. Nothing is fetched from the property site by this app or by any server.
+- The listing travels in the address of the page it opens (`#import=...`) and is removed from the address once read.
+- What arrives is treated as untrusted: only pictures on the three sites' own picture servers are shown, and only a listing address on those sites is linked.
+- Photos and floor plans load from the property site into the browser. They are not stored, and they are left out when printing.
+- It works on a computer. On a phone, use the browser's Share button and paste what it gives: the headline is enough for the price, street, bedrooms and type.
+
+The script is `collectListing` in `src/app/send-button.ts`. It has to stand alone, because its own text is what the bookmark holds.
+
 ## Data that ships with the app
 
 Schools, Ofsted results, stations and hospitals are read from files in `public/data/places/`, not from a live service, so the Location section is quick and does not depend on anyone else's server. Schools are split into squares of half a degree, and the app loads only the one to four squares around the house.
@@ -99,8 +111,25 @@ npx ng test --watch=false
 ```
 
 ```bash
+npm run test:coverage
+```
+
+```bash
 npx ng build
 ```
+
+### Tests come first
+
+New behaviour is written test-first: add a test that fails for the right reason, then the code that makes it pass, then tidy up. A bug gets a test that reproduces it before it gets a fix.
+
+`npm run test:coverage` runs every test and then fails if coverage is under 80% on statements, branches, functions or lines. The figure counts every file under `src/app`, including any no test touches, so it cannot be flattered by leaving code out. The deploy workflow runs the same command, so a change that drops coverage below the floor does not go live. An HTML report is written to `coverage/offerladder/`.
+
+| Tests | Cover |
+|---|---|
+| `src/app/app.spec.ts` | The calculations: valuation, offers, stamp duty, mortgage, demand outlook, listing reader, places, messages, the browser button |
+| `src/app/data.service.spec.ts` | Every lookup, with the network faked: postcodes, Land Registry, price index, Nomis, crime, flood, map server, journeys, bundled files |
+| `src/app/app.component.spec.ts` | The main screen: analysing, importing, comparing, late and failed lookups |
+| `src/app/ui/views.spec.ts` | The calculators, comparison, glossary, viewing and offer messages, value bar |
 
 The calculation logic is in `src/app/engine.ts` and is covered by `src/app/app.spec.ts`. Data access is in `src/app/data.service.ts`. Design tokens and component classes are in `src/styles.css`; the icon set and the value bar are in `src/app/ui/`.
 

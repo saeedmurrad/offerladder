@@ -71,6 +71,20 @@
             }
           </div>
         }
+        <details class="group rounded-lg border border-line bg-surface/70 print:hidden">
+          <summary class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] font-semibold [&::-webkit-details-marker]:hidden">
+            <app-icon name="arrow" [size]="14" />One-click button for your computer
+            <span class="ml-auto text-[12px] text-brand group-open:hidden">Show</span><span class="ml-auto hidden text-[12px] text-brand group-open:inline">Hide</span>
+          </summary>
+          <div class="flex flex-col gap-2.5 border-t border-line p-3 text-[13px] leading-snug">
+            <p><b>1.</b> Show your bookmarks bar (Ctrl+Shift+B, or Cmd+Shift+B on a Mac).</p>
+            <p><b>2.</b> Drag this button up onto it:</p>
+            <a id="sendButton" class="btn-primary h-10! cursor-grab self-start text-[14px]! no-underline" [href]="sendButton" (click)="sendButtonClicked($event)" title="Drag me to your bookmarks bar"><app-icon name="arrow" [size]="16" />Send to OfferLadder</a>
+            @if (sendButtonNote()) { <p class="font-medium text-warn" role="status">{{ sendButtonNote() }}</p> }
+            <p><b>3.</b> Open any listing on Zoopla, Rightmove or OnTheMarket and click the button. The listing opens here already analysed, with its photos, floor plan and full postcode.</p>
+            <p class="hint">It reads the page that is open in your own browser, the same as copying it by hand. It works on a computer; on a phone, use the Share button and paste what it gives you.</p>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -443,6 +457,36 @@
         </div>
         <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Maximum:</b> the middle value; above it the evidence no longer supports the price. None goes above the asking price. When this house has itself sold in the last few years, that sale counts for more than the neighbours' sales.</p>
       </article>
+
+      <!-- Photos from the listing -->
+      @if (photos().length) {
+        <article id="photos" class="card card-pad print:hidden">
+          <div class="section-head"><span class="icon-badge"><app-icon name="home" /></span><h2>Photos and floor plan</h2></div>
+          <div class="flex flex-col gap-4">
+            @if (galleryPhotos().length) {
+              <ul class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                @for (photo of galleryPhotos(); track photo.url; let n = $index) {
+                  <li><a [href]="photo.url" target="_blank" rel="noopener noreferrer" class="block overflow-hidden rounded-lg border border-line bg-sunken"><img class="aspect-[4/3] w-full object-cover" [src]="photo.url" [alt]="'Listing photo ' + (n + 1)" loading="lazy" referrerpolicy="no-referrer"></a></li>
+                }
+              </ul>
+            }
+            @if (floorPlans().length) {
+              <div>
+                <h3 class="mb-2 text-[14px] font-bold">Floor plan</h3>
+                <div class="flex flex-col gap-2">
+                  @for (plan of floorPlans(); track plan.url; let n = $index) {
+                    <a [href]="plan.url" target="_blank" rel="noopener noreferrer" class="block overflow-hidden rounded-lg border border-line bg-white p-2"><img class="mx-auto max-h-[520px] w-auto max-w-full" [src]="plan.url" [alt]="'Floor plan ' + (n + 1)" loading="lazy" referrerpolicy="no-referrer"></a>
+                  }
+                </div>
+                <p class="hint mt-2">The floor area is usually printed on the plan. Enter it in the form for a firmer valuation.</p>
+              </div>
+            }
+            <p class="hint">These pictures belong to the estate agent and load straight from {{ sentFrom()?.site ?? 'the property site' }} into your browser. OfferLadder does not keep them, and they are left out when you print.
+              @if (sentFrom(); as from) { <a [href]="from.url" target="_blank" rel="noopener noreferrer">Open the listing</a>. }
+            </p>
+          </div>
+        </article>
+      }
 
       <!-- In short -->
       @if (summary().length) {

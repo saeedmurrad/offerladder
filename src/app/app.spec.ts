@@ -6,6 +6,7 @@ import { headlineAddress, matchHouse, parseListing, pastedLink, streetPostcodes 
 import { AreaSeries, Comp, DEFAULT_INPUTS, DemandData, HpiMonth, Inputs, Sale, Snapshot } from './models';
 import { emailLink, offerMessage, offerReasons, slotLabel, summaryPoints, SummaryFacts, viewingCalendarFile, viewingChecklist, viewingMessage, whatsAppLink } from './next-steps';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { bookmarklet, collectListing, listingPhotos, readSentListing } from './send-button';
 import { buildPlaces, metres, OsmElement, placeQueries } from './places';
 import { HospitalRecord, hospitalsNear, ofstedResult, schoolCells, SchoolRecord, schoolsNear, StationRecord, stationsNear } from './places-data';
 
@@ -798,5 +799,110 @@ describe('a shared listing headline', () => {
     const p = parseListing('3 bed terraced house for sale\nBurghley Road, Peterborough PE1\n£159,950\nAdded on 02/10/2026\nSold February 1999 £34,000');
     expect(p).toMatchObject({ asking: 159_950, street: 'Burghley Road', outcode: 'PE1', bedrooms: 3, listedDate: '2026-10-02' });
     expect(p.pastSales).toHaveLength(1);
+  });
+});
+
+describe('the Send to OfferLadder button', () => {
+  const APP = 'https://example.test/offerladder/';
+  const HASH = 'da172493def22041e5dde2f0bd9a49c7e821f3c9';
+  const HASH2 = '54a7e79c5d9fc3ac3ec858a2927d47dc3018b6fa';
+  const PLAN = '484028ec4ef83e9f1f9b27c74e66713c9e9b1289';
+  /** A cut-down Zoopla listing page: two sizes of each photo, one photo only in the page data, the floor plan by file name, the postcode in two parts. */
+  const zooplaPage = `
+    <h1>2 bed end terrace house for sale</h1><p>Burghley Road, Peterborough, Cambridgeshire PE1</p><p>£150,000</p><p>Added on 10/09/2026</p>
+    <picture><source srcset="https://lid.zoocdn.com/u/480/360/${HASH}.jpg:p 480w, https://lid.zoocdn.com/u/1024/768/${HASH}.jpg:p 768w"><img src="https://lid.zoocdn.com/u/480/360/${HASH}.jpg"></picture>
+    <img src="https://st.zoocdn.com/zoopla_static_agent_logo_(640056).png"><img src="https://example.com/tracker.jpg">
+    <script>self.__next_f.push([1,"{\\"image\\":\\"https:\\/\\/lid.zoocdn.com\\/u\\/1024\\/768\\/${HASH2}.jpg\\",\\"floorPlan\\":{\\"image\\":[{\\"caption\\":\\"Fp\\",\\"filename\\":\\"${PLAN}.jpg\\"}],\\"pdf\\":null},\\"outcode\\":\\"PE1\\",\\"incode\\":\\"2QA\\"}"])</script>`;
+
+  function clickOn(page: string): string {
+    document.body.innerHTML = page;
+    let opened = '';
+    const realOpen = window.open;
+    window.open = ((url: string) => ((opened = url), {})) as unknown as typeof window.open;
+    try {
+      collectListing(APP);
+    } finally {
+      window.open = realOpen;
+    }
+    return opened;
+  }
+
+  it('collects the text, one address per picture at its largest size, the floor plan and the postcode', () => {
+    const opened = clickOn(zooplaPage);
+    expect(opened.startsWith(`${APP}#import=`)).toBe(true);
+    const data = JSON.parse(decodeURIComponent(opened.slice(`${APP}#import=`.length)));
+    expect(data.i).toEqual([`https://lid.zoocdn.com/u/1024/768/${HASH}.jpg`, `https://st.zoocdn.com/zoopla_static_agent_logo_(640056).png`, `https://lid.zoocdn.com/u/1024/768/${HASH2}.jpg`]);
+    expect(data.f).toEqual([`${PLAN}.jpg`]);
+    expect(data.p).toBe('PE1 2QA');
+    expect(data.x).toContain('Burghley Road, Peterborough');
+  });
+
+  it('is read back by the app as a listing with its photos, floor plan and postcode', () => {
+    const opened = clickOn(zooplaPage);
+    const sent = readSentListing(opened.slice(APP.length))!;
+    // The test page lives on localhost, not on a property site, so its own address is not kept.
+    expect(sent.url).toBe('');
+    expect(sent.postcode).toBe('PE1 2QA');
+    expect(sent.photos).toEqual([
+      { url: `https://lid.zoocdn.com/u/1024/768/${HASH}.jpg`, floorPlan: false },
+      { url: `https://lid.zoocdn.com/u/1024/768/${HASH2}.jpg`, floorPlan: false },
+      { url: `https://lid.zoocdn.com/u/2400/1800/${PLAN}.jpg`, floorPlan: true },
+    ]);
+    // (The test browser has no line breaks in page text, so reading the text into a listing is checked on the real page instead.)
+    expect(sent.text).toContain('£150,000');
+  });
+
+  it('keeps only this listing\'s pictures on Rightmove and OnTheMarket', () => {
+    const rm = listingPhotos(
+      [
+        'https://media.rightmove.co.uk/property-photo/7c777e2ea/174717416/7c777e2eaaab920ed3efa4a884150b9b.jpeg',
+        'https://media.rightmove.co.uk/property-floorplan/52b57b270/174717416/52b57b270bbfb194d6153edc706d80d0.jpeg',
+        'https://media.rightmove.co.uk/property-photo/aaaaaaaaa/999999999/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpeg', // another house further down the page
+        'https://media.rightmove.co.uk/partner-logo/12866239-LOGO-1786621232507.jpg',
+        'https://media.rightmove.co.uk/assets/a04c/images/happy-people.jpg',
+      ],
+      [],
+      'https://www.rightmove.co.uk/properties/174717416#/?channel=RES_BUY',
+    );
+    expect(rm.map((p) => [p.url.split('/')[3], p.floorPlan])).toEqual([['property-photo', false], ['property-floorplan', true]]);
+    const otm = listingPhotos(
+      ['https://media.onthemarket.com/properties/20258030/1659576182/floor-plan-0-original.jpg', 'https://media.onthemarket.com/properties/20258030/1659576182/image-0-1024x1024.jpg', 'https://media.onthemarket.com/agents/companies/14724/260218120132305/logo-190x100.png'],
+      [],
+      'https://www.onthemarket.com/details/20258030/',
+    );
+    expect(otm.map((p) => p.floorPlan)).toEqual([false, true]); // photos first, the plan last
+  });
+
+  it('shows each picture once, even if it is sent twice', () => {
+    const twice = ['https://lid.zoocdn.com/u/1024/768/' + HASH + '.jpg', 'https://lid.zoocdn.com/u/1024/768/' + HASH + '.jpg', 'https://lid.zoocdn.com/u/1024/768/' + HASH2 + '.jpg'];
+    expect(listingPhotos(twice, [PLAN + '.jpg', PLAN + '.jpg'], 'https://www.zoopla.co.uk/for-sale/details/74203533/').map((p) => p.url.split('/').pop())).toEqual([HASH + '.jpg', HASH2 + '.jpg', PLAN + '.jpg']);
+  });
+
+  it('refuses anything that is not a picture on a property site', () => {
+    const bad = ['http://lid.zoocdn.com/u/1024/768/' + HASH + '.jpg', 'https://evil.example/lid.zoocdn.com/u/1/1/x.jpg', 'https://lid.zoocdn.com.evil.example/u/1024/768/x.jpg', 'javascript:alert(1)', 'https://lid.zoocdn.com/u/1024/768/x.svg', 'not a url'];
+    expect(listingPhotos(bad, ['../../etc/passwd', '<script>.jpg'], 'https://www.zoopla.co.uk/for-sale/details/74203533/')).toEqual([]);
+    expect(readSentListing('#import=not-json')).toBeNull();
+    expect(readSentListing('#offer')).toBeNull();
+    expect(readSentListing('#import=' + encodeURIComponent(JSON.stringify({ v: 1, x: '' })))).toBeNull();
+    const sent = readSentListing('#import=' + encodeURIComponent(JSON.stringify({ v: 1, u: 'https://evil.example/x', x: 'some text', p: 'DROP TABLE', i: 'nope', f: null })))!;
+    expect(sent).toEqual({ url: '', site: null, text: 'some text', postcode: null, photos: [] });
+    const good = readSentListing('#import=' + encodeURIComponent(JSON.stringify({ v: 1, u: 'https://www.zoopla.co.uk/for-sale/details/74203533/', x: 'text', p: 'pe1 2qa', i: [], f: [] })))!;
+    expect(good).toMatchObject({ url: 'https://www.zoopla.co.uk/for-sale/details/74203533/', site: 'Zoopla', postcode: 'PE1 2QA' });
+  });
+
+  it('is a bookmark that runs by itself', () => {
+    const href = bookmarklet(APP);
+    expect(href.startsWith('javascript:')).toBe(true);
+    document.body.innerHTML = zooplaPage;
+    let opened = '';
+    const realOpen = window.open;
+    window.open = ((url: string) => ((opened = url), {})) as unknown as typeof window.open;
+    try {
+      new Function(decodeURIComponent(href.slice('javascript:'.length)))();
+    } finally {
+      window.open = realOpen;
+    }
+    expect(opened.startsWith(`${APP}#import=`)).toBe(true);
+    expect(JSON.parse(decodeURIComponent(opened.slice(`${APP}#import=`.length))).p).toBe('PE1 2QA');
   });
 });

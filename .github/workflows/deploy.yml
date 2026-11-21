@@ -24,7 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx ng test --watch=false
+      # Runs every test and stops the deploy if coverage is under 80% on any measure.
+      - run: npm run test:coverage
       - run: npx ng build --base-href "/${{ github.event.repository.name }}/"
       - name: Single-page fallback
         run: cp dist/offerladder/browser/index.html dist/offerladder/browser/404.html

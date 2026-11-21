@@ -1,4 +1,5 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
 import { DataService } from './data.service';
 import { demandOutlook } from './demand';
 import {
@@ -24,6 +25,7 @@ import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing
 import { AreaData, Comp, DEFAULT_INPUTS, DemandData, Geo, Inputs, Journeys, Places, PlacesMeta, PropertyType, Sale, School, SdltMode, Snapshot } from './models';
 import { HouseFacts, summaryPoints } from './next-steps';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { bookmarklet, ListingPhoto, readSentListing, SentListing } from './send-button';
 import { metres } from './places';
 import { CalculatorsView } from './ui/calculators-view';
 import { CompareView } from './ui/compare-view';
@@ -101,6 +103,16 @@ export class App {
   readonly importPostcodes = signal<{ postcode: string; sales: number }[]>([]);
   /** Set when a web address was pasted instead of the listing text, so the page can offer to open it. */
   readonly importLink = signal('');
+  /** Photos and floor plans that came with a listing sent by the browser button. Shown from the property site; never stored. */
+  readonly photos = signal<ListingPhoto[]>([]);
+  readonly sentFrom = signal<{ url: string; site: string } | null>(null);
+  readonly galleryPhotos = computed(() => this.photos().filter((p) => !p.floorPlan));
+  readonly floorPlans = computed(() => this.photos().filter((p) => p.floorPlan));
+  /** The "Send to OfferLadder" bookmark. It is this app's own script, written in send-button.ts, so it is safe to offer as a link. */
+  readonly sendButton = inject(DomSanitizer).bypassSecurityTrustUrl(bookmarklet(new URL('.', document.baseURI).href));
+  readonly sendButtonNote = signal('');
+  /** The postcode district the photos belong to, so they are dropped when a house somewhere else is analysed. */
+  private photosOutcode = '';
   /** Local prices today over local prices in the month this house last sold; null when not known. */
   readonly ownIndex = signal<number | null>(null);
   /** Says so when the property type was taken from the house's own Land Registry record. */
@@ -148,6 +160,14 @@ export class App {
   ];
 
   constructor() {
+    // A listing sent by the browser button arrives in the page address. Take it out of the address once read,
+    // so reloading or sharing the page does not import it again.
+    const sent = readSentListing(location.hash);
+    if (sent) {
+      history.replaceState(null, '', location.pathname + location.search);
+      this.listingText.set(sent.text);
+      void this.importListing(sent);
+    }
     effect(() => {
       try {
         localStorage.setItem(STORE_KEY, JSON.stringify(this.inputs()));
@@ -391,8 +411,11 @@ export class App {
 
   // ---- import from a pasted listing ----
   /** Read pasted listing text, fill the form, then identify the exact house from Land Registry and analyse it. */
-  async importListing(): Promise<void> {
+  async importListing(sent?: SentListing): Promise<void> {
     this.importLink.set('');
+    this.sendButtonNote.set('');
+    this.photos.set(sent?.photos ?? []);
+    this.sentFrom.set(sent?.url ? { url: sent.url, site: sent.site ?? 'the listing' } : null);
     const link = pastedLink(this.listingText());
     if (link) {
       // Nothing can be read from a web address alone, so say so plainly instead of failing quietly.
@@ -406,6 +429,12 @@ export class App {
       return;
     }
     const p = parseListing(this.listingText());
+    // The page's own data often holds the full postcode that the visible address leaves out.
+    if (sent?.postcode && !p.postcode) {
+      p.postcode = sent.postcode;
+      p.outcode = sent.postcode.split(' ')[0];
+    }
+    this.photosOutcode = p.outcode ?? '';
     const found: string[] = [];
     if (p.asking) found.push(`Asking ${this.gbp(p.asking)}`);
     if (p.bedrooms) found.push(`${p.bedrooms} bed`);
@@ -419,6 +448,11 @@ export class App {
     if (p.chainFree) found.push('No chain');
     if (p.parking) found.push(p.parking === 'offStreet' ? 'Off-street parking' : 'On-street parking only');
     if (p.pastSales.length) found.push(`${p.pastSales.length} past sale${p.pastSales.length === 1 ? '' : 's'}`);
+    if (sent) {
+      const plans = sent.photos.filter((x) => x.floorPlan).length;
+      if (sent.photos.length - plans) found.push(`${sent.photos.length - plans} photos`);
+      if (plans) found.push(plans === 1 ? 'Floor plan' : `${plans} floor plans`);
+    }
     this.importFound.set(found);
     this.importPostcodes.set([]);
     if (!p.asking && !p.street) {
@@ -492,6 +526,12 @@ export class App {
     }
   }
 
+  /** The bookmark is for dragging to the bookmarks bar. Clicked here it would only read this page, so explain instead. */
+  sendButtonClicked(event: Event): void {
+    event.preventDefault();
+    this.sendButtonNote.set('Do not click it here. Drag it up to your bookmarks bar, then click it while you are looking at a listing.');
+  }
+
   usePostcode(postcode: string): void {
     this.set('postcode', postcode);
     void this.analyse();
@@ -510,9 +550,17 @@ export class App {
     this.saveNote.set('');
     try {
       const geo = await this.data.lookupPostcode(i.postcode);
+      if (this.photos().length && this.photosOutcode && geo.outcode !== this.photosOutcode) {
+        this.photos.set([]);
+        this.sentFrom.set(null);
+      }
       if (geo.country !== 'England' && geo.country !== 'Wales') {
         throw new Error(`Land Registry price data covers England and Wales only. ${geo.postcode} is in ${geo.country}.`);
       }
+      // From here on this is the house on the page. It is set before anything is looked up in the background,
+      // so an answer that comes back at once is not mistaken for one about the previous house and thrown away.
+      // (The report stays hidden while loading, so nothing half-updated is shown.)
+      this.geo.set(geo);
       const nearby = await this.data.nearbyPostcodes(geo, i.wideSearch);
       const since = new Date();
       since.setMonth(since.getMonth() - i.monthsBack);
@@ -564,7 +612,6 @@ export class App {
         this.demand.set(demand);
         this.demandLoading.set(false);
       });
-      this.geo.set(geo);
       this.set('postcode', geo.postcode);
       this.nearbySales.set(sales);
       this.ownIndex.set(move);

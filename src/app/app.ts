@@ -1,5 +1,6 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
 import { DataService } from './data.service';
+import { demandOutlook } from './demand';
 import {
   adjustmentFactors,
   assumedFloorArea,
@@ -20,10 +21,14 @@ import {
   valuation,
 } from './engine';
 import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
-import { AreaData, Comp, DEFAULT_INPUTS, Geo, Inputs, PropertyType, Sale, SdltMode, Snapshot } from './models';
+import { AreaData, Comp, DEFAULT_INPUTS, DemandData, Geo, Inputs, Journeys, Places, PlacesMeta, PropertyType, Sale, School, SdltMode, Snapshot } from './models';
+import { HouseFacts, summaryPoints } from './next-steps';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { metres } from './places';
+import { CalculatorsView } from './ui/calculators-view';
 import { CompareView } from './ui/compare-view';
 import { GlossaryView } from './ui/glossary-view';
+import { NextStepsView } from './ui/next-steps-view';
 import { Icon } from './ui/icon';
 import { ValueBar } from './ui/value-bar';
 
@@ -31,7 +36,7 @@ const STORE_KEY = 'property-offer-analyser.inputs.v1';
 const THEME_KEY = 'property-offer-analyser.theme';
 const SAVED_KEY = 'property-offer-analyser.saved.v1';
 const MAX_SAVED = 3;
-type View = 'analyse' | 'compare' | 'glossary';
+type View = 'analyse' | 'compare' | 'calculators' | 'glossary';
 
 function loadSaved(): Snapshot[] {
   try {
@@ -64,7 +69,7 @@ function loadInputs(): Inputs {
 
 @Component({
   selector: 'app-root',
-  imports: [Icon, ValueBar, CompareView, GlossaryView],
+  imports: [Icon, ValueBar, CompareView, CalculatorsView, GlossaryView, NextStepsView],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
@@ -79,6 +84,16 @@ export class App {
   readonly history = signal<Sale[]>([]);
   readonly comps = signal<Comp[]>([]);
   readonly area = signal<AreaData | null>(null);
+  readonly demand = signal<DemandData | null>(null);
+  /** What is around the house. The map server can take up to a minute, so this arrives after the rest of the report. */
+  readonly places = signal<Places | null>(null);
+  readonly placesState = signal<'idle' | 'loading' | 'done' | 'failed'>('idle');
+  /** Car parks, GPs and shops still come from the public map server, which is slow, so they follow the official places. */
+  readonly extrasState = signal<'idle' | 'loading' | 'done' | 'failed'>('idle');
+  readonly placesMeta = signal<PlacesMeta | null>(null);
+  readonly journeys = signal<Journeys | null>(null);
+  readonly metres = metres;
+  readonly demandLoading = signal(false);
   readonly listingText = signal('');
   readonly importBusy = signal(false);
   readonly importFound = signal<string[]>([]);
@@ -100,6 +115,7 @@ export class App {
   readonly views: { key: View; label: string }[] = [
     { key: 'analyse', label: 'Analyse' },
     { key: 'compare', label: 'Compare' },
+    { key: 'calculators', label: 'Calculators' },
     { key: 'glossary', label: 'Glossary' },
   ];
   readonly theme = signal<Theme | null>(loadTheme());
@@ -113,12 +129,15 @@ export class App {
   ];
   readonly sections = [
     { id: 'offer', label: 'Offer' },
+    { id: 'next', label: 'Next steps' },
     { id: 'house', label: 'This house' },
     { id: 'comps', label: 'Comparables' },
     { id: 'value', label: 'Value' },
     { id: 'returns', label: 'Returns' },
     { id: 'duty', label: 'Stamp duty' },
+    { id: 'location', label: 'Location' },
     { id: 'area', label: 'Area' },
+    { id: 'demand', label: 'Demand' },
     { id: 'checks', label: 'Checks' },
   ];
 
@@ -160,6 +179,60 @@ export class App {
     const g = this.geo();
     return g ? `${g.postcode}|${normaliseHouse(this.inputs().houseNumber)}` : '';
   });
+  /** What the calculators start from: the house on screen, if one has been analysed. */
+  readonly calculatorPrice = computed(() => (this.status() === 'done' ? (this.ladder()?.target ?? this.inputs().asking) : this.inputs().asking));
+  readonly calculatorLabel = computed(() => {
+    const g = this.geo();
+    if (this.status() !== 'done' || !g || !this.calculatorPrice()) return '';
+    const name = [this.inputs().houseNumber, this.inputs().street].filter(Boolean).join(' ');
+    return `${this.ladder() ? 'the "aim for" price' : 'the asking price'} of ${name ? `${name}, ` : ''}${g.postcode}`;
+  });
+  /** The house as you would write it to an estate agent. */
+  readonly fullAddress = computed(() => {
+    const g = this.geo();
+    const street = [this.inputs().houseNumber, this.inputs().street].filter(Boolean).join(' ');
+    return [street, g?.postcode ?? this.inputs().postcode].filter(Boolean).join(', ') || 'the property';
+  });
+  readonly houseFacts = computed<HouseFacts>(() => ({
+    inputs: this.inputs(),
+    floodAreas: this.area()?.flood ? this.area()!.flood!.areas.length : null,
+    sellerYears: this.seller()?.yearsHeld ?? null,
+    daysListed: this.daysListed(),
+  }));
+  /** The whole report in a few plain lines. */
+  readonly summary = computed(() => {
+    const p = this.places();
+    const seller = this.seller();
+    const crime = this.area()?.crime;
+    const flood = this.area()?.flood;
+    const rated = p?.official ? p.schools.filter((s) => s.ofsted) : null;
+    return summaryPoints({
+      stance: this.stance(),
+      asking: this.inputs().asking,
+      sellerPaid: seller?.paid ?? null,
+      sellerPaidDate: seller?.paidDate ?? null,
+      sellerYears: seller?.yearsHeld ?? null,
+      daysListed: this.daysListed(),
+      netYieldAtTarget: this.targetReturn()?.r.netYield ?? null,
+      targetYield: this.inputs().targetNetYieldPct,
+      stationName: p?.stations[0]?.kind === 'Rail' ? p.stations[0].name : null,
+      stationWalkMinutes: this.journeys()?.stationWalk?.minutes ?? null,
+      schools: p?.official ? p.schoolCount : null,
+      schoolsGood: rated ? rated.filter((s) => !s.ofsted!.weak).length : null,
+      demand: this.outlook()?.verdict ?? null,
+      district: this.geo()?.district ?? '',
+      floodAreas: flood ? flood.areas.length : null,
+      crimeNow: crime?.total ?? null,
+      crimeYearAgo: crime?.yearAgo ?? null,
+      epc: this.inputs().epc,
+      parking: this.inputs().parking,
+    });
+  });
+  /** The optional part of the form starts open only if something in it has already been filled in. */
+  readonly moreOpen = (() => {
+    const i = this.inputs();
+    return i.condition !== 'average' || i.heating !== 'unknown' || i.epc !== 'unknown' || !!i.rentPcm || i.useMortgage || i.sdltMode !== DEFAULT_INPUTS.sdltMode || i.bathroomDownstairs || i.boxRoom;
+  })();
   readonly isSaved = computed(() => this.saved().some((s) => s.id === this.currentId()));
 
   /** Freeze the current analysis and add it to the comparison (or update it if already there). */
@@ -197,7 +270,7 @@ export class App {
       crimeTotal: a?.crime?.total ?? null,
       floodAreas: a?.flood ? a.flood.areas.length : null,
       hpiChangePct: a?.hpi?.annualChangePct ?? null,
-      stationM: a?.amenities?.station?.distanceM ?? null,
+      stationM: this.places()?.stations[0]?.distanceM ?? null,
     };
     const list = this.saved();
     const at = list.findIndex((s) => s.id === snap.id);
@@ -249,6 +322,11 @@ export class App {
     return gap !== null && Math.abs(gap) > 15 ? gap : null;
   });
   readonly areaLoading = signal(false);
+  /** Where the council area's housing market is heading, from prices, sales, population, supply, earnings and jobs. */
+  readonly outlook = computed(() => {
+    const d = this.demand();
+    return d ? demandOutlook(d, this.inputs().propertyType) : null;
+  });
   readonly ladder = computed(() => {
     const v = this.value();
     return v ? offerLadder(v, this.inputs().asking) : null;
@@ -304,6 +382,7 @@ export class App {
       forSale: `https://www.zoopla.co.uk/for-sale/property/${out}/`,
       title: 'https://search-property-information.service.gov.uk/',
       flood: 'https://check-long-term-flood-risk.service.gov.uk/postcode',
+      localHousing: /^[EW]\d{8}$/.test(g.districtCode) ? `https://www.ons.gov.uk/visualisations/housingpriceslocal/${g.districtCode}/` : '',
       deprivation: g.lsoaCode ? `https://deprivation.communities.gov.uk/about-your-neighbourhood/${g.lsoaCode}` : '',
       licensing: `https://www.google.com/search?q=${encodeURIComponent(`selective licensing ${g.district} council streets`)}`,
       sdlt: 'https://www.gov.uk/stamp-duty-land-tax/residential-property-rates',
@@ -338,6 +417,7 @@ export class App {
     if (p.heating) found.push(p.heating === 'gas' ? 'Gas heating' : 'Electric heating');
     if (p.condition === 'refurbished') found.push('Refurbished');
     if (p.chainFree) found.push('No chain');
+    if (p.parking) found.push(p.parking === 'offStreet' ? 'Off-street parking' : 'On-street parking only');
     if (p.pastSales.length) found.push(`${p.pastSales.length} past sale${p.pastSales.length === 1 ? '' : 's'}`);
     this.importFound.set(found);
     this.importPostcodes.set([]);
@@ -361,6 +441,7 @@ export class App {
       heating: p.heating ?? 'unknown',
       condition: p.condition ?? 'average',
       bathroomDownstairs: p.bathroomDownstairs,
+      parking: p.parking ?? 'unknown',
       boxRoom: false,
       rentPcm: null,
     }));
@@ -450,7 +531,6 @@ export class App {
                   crimeTotal: area.crime?.total ?? null,
                   floodAreas: area.flood ? area.flood.areas.length : null,
                   hpiChangePct: area.hpi?.annualChangePct ?? null,
-                  stationM: area.amenities?.station?.distanceM ?? null,
                 }
               : s,
           ),
@@ -472,6 +552,15 @@ export class App {
       // Bring the house's own last sale to today's prices. Without the index the sale is used as it stands.
       const lastSale = ownSale(history, null);
       const move = lastSale ? await this.data.priceMove(geo, i.propertyType, lastSale.date.slice(0, 7)).catch(() => null) : null;
+      void this.loadPlaces(geo);
+      // The demand outlook also loads in the background. It belongs to the council area, so it is kept between houses there.
+      if (this.demand()?.areaName !== geo.district) this.demand.set(null);
+      this.demandLoading.set(true);
+      void this.data.demand(geo).then((demand) => {
+        if (this.geo()?.districtCode !== geo.districtCode) return;
+        this.demand.set(demand);
+        this.demandLoading.set(false);
+      });
       this.geo.set(geo);
       this.set('postcode', geo.postcode);
       this.nearbySales.set(sales);
@@ -485,6 +574,73 @@ export class App {
     } catch (e) {
       this.fail(e instanceof Error ? e.message : 'Something went wrong while loading the data.');
     }
+  }
+
+  /**
+   * What is around the house. Schools, stations and hospitals come at once from the official data that ships with the app;
+   * the journeys follow; car parks, GPs and shops arrive last from the public map server.
+   */
+  private async loadPlaces(geo: Geo): Promise<void> {
+    const current = () => this.geo()?.postcode === geo.postcode; // false once another house has been analysed
+    this.places.set(null);
+    this.journeys.set(null);
+    this.placesState.set('loading');
+    this.extrasState.set('loading');
+    if (!this.placesMeta()) void this.data.placesMeta().then((m) => this.placesMeta.set(m));
+
+    const official = await this.data.officialPlaces(geo);
+    if (!current()) return;
+    if (official) {
+      this.showPlaces(geo, official);
+      const extras = await this.data.nearbyExtras(geo).catch(() => null);
+      if (!current()) return;
+      if (extras) {
+        const { carParks, doctors, pharmacy, supermarket, supermarketCount, park, busStops } = extras;
+        this.places.update((p) => (p ? { ...p, nearOk: true, carParks, doctors, pharmacy, supermarket, supermarketCount, park, busStops } : p));
+      }
+      this.extrasState.set(extras ? 'done' : 'failed');
+      return;
+    }
+    // The bundled files could not be read: fall back to the map for everything.
+    const mapped = await this.data.places(geo).catch(() => null);
+    if (!current()) return;
+    this.extrasState.set(mapped?.nearOk ? 'done' : 'failed');
+    if (mapped) this.showPlaces(geo, mapped);
+    else this.placesState.set('failed');
+  }
+
+  private showPlaces(geo: Geo, places: Places): void {
+    this.places.set(places);
+    this.placesState.set('done');
+    // A house saved before this arrived gets its station distance filled in.
+    const id = this.currentId();
+    this.saved.update((list) => list.map((s) => (s.id === id ? { ...s, stationM: places.stations[0]?.distanceM ?? null } : s)));
+    void this.data
+      .journeys(geo, places)
+      .catch(() => null)
+      .then((journeys) => {
+        if (this.geo()?.postcode === geo.postcode) this.journeys.set(journeys);
+      });
+  }
+
+  retryPlaces(): void {
+    const g = this.geo();
+    if (g) void this.loadPlaces(g);
+  }
+
+  schoolRecord(s: School): string {
+    return `https://get-information-schools.service.gov.uk/Establishments/Establishment/Details/${s.urn}`;
+  }
+  schoolOfsted(s: School): string {
+    return `https://reports.ofsted.gov.uk/search?q=${s.urn}`;
+  }
+  schoolLine(s: School): string {
+    const pupils = s.pupils ? `${s.pupils.toLocaleString('en-GB')} pupils` : '';
+    return [s.phase, s.kind || (s.independent ? 'independent (fee-paying)' : ''), s.gender, s.selective ? 'selective' : '', s.faith, s.ages, pupils].filter(Boolean).join(', ');
+  }
+  crimeChange(now: number, before: number): string {
+    const pct = before > 0 ? (now / before - 1) * 100 : 0;
+    return Math.abs(pct) < 3 ? 'about the same as' : `${Math.abs(pct).toFixed(0)}% ${pct > 0 ? 'more' : 'fewer'} than`;
   }
 
   private fail(message: string): void {

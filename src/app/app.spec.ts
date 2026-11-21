@@ -1,9 +1,13 @@
-import { assumedFloorArea, evidenceGapPct, offerLadder, ownSale, ownSaleWeight, quartiles, rentalReturns, maxPriceForYield, sdlt, valuation, adjustmentFactors, sellerPosition } from './engine';
+import { assumedFloorArea, evidenceGapPct, mortgage, offerLadder, ownSale, ownSaleWeight, quartiles, rentalReturns, maxPriceForYield, sdlt, sdltBreakdown, valuation, adjustmentFactors, sellerPosition } from './engine';
 import { compare } from './compare';
+import { demandOutlook } from './demand';
 import { GLOSSARY } from './glossary';
 import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
-import { Comp, DEFAULT_INPUTS, Inputs, Sale, Snapshot } from './models';
+import { AreaSeries, Comp, DEFAULT_INPUTS, DemandData, HpiMonth, Inputs, Sale, Snapshot } from './models';
+import { emailLink, offerMessage, offerReasons, slotLabel, summaryPoints, SummaryFacts, viewingCalendarFile, viewingChecklist, viewingMessage, whatsAppLink } from './next-steps';
 import { applyPastedAreas, parsePastedAreas } from './paste';
+import { buildPlaces, metres, OsmElement, placeQueries } from './places';
+import { HospitalRecord, hospitalsNear, ofstedResult, schoolCells, SchoolRecord, schoolsNear, StationRecord, stationsNear } from './places-data';
 
 const comp = (price: number, m2: number | null, paon = '1', postcode = 'PE1 2QG'): Comp => ({
   id: `${postcode}|${paon}|${price}`,
@@ -414,5 +418,349 @@ describe('a link pasted instead of the listing', () => {
     expect(pastedLink('3 bed terraced house for sale\nBurghley Road, Peterborough PE1\n£159,950\nhttps://www.zoopla.co.uk/for-sale/details/12345678/')).toBeNull();
     expect(pastedLink('3 bed terraced house for sale')).toBeNull();
     expect(pastedLink('')).toBeNull();
+  });
+});
+
+describe('demand outlook', () => {
+  /** 84 months from July 2019 to June 2026. The last two months have no sales count, as in the real index. */
+  const months = (indexAt: (n: number) => number, salesAt: (n: number) => number, newBuild: number, average: number): HpiMonth[] =>
+    Array.from({ length: 84 }, (_, n) => {
+      const y = 2019 + Math.floor((n + 6) / 12);
+      const m = ((n + 6) % 12) + 1;
+      return { month: `${y}-${String(m).padStart(2, '0')}`, average, index: indexAt(n), byType: {}, sales: n >= 82 ? null : salesAt(n), newBuild: n >= 82 ? null : newBuild };
+    });
+  const series = (over: Partial<AreaSeries>): AreaSeries => ({ hpi: [], population: [], earnings: [], claimants: [], ...over });
+  // The country: prices +2% a year, steady sales, population +0.5% a year, 6 residents per new home, price 7.5 times pay.
+  const country = series({
+    hpi: months((n) => 100 * Math.pow(1.02, n / 12), () => 50_000, 5_000, 300_000),
+    population: [[2020, 56_000_000], [2025, 57_414_000]],
+    earnings: [[2020, 32_000], [2025, 40_000]],
+    claimants: [['2025-06', 4.0], ['2026-06', 4.0]],
+  });
+  const data = (area: AreaSeries): DemandData => ({ areaName: 'Testshire', countryName: 'England', area, country });
+  const signals = (d: DemandData) => Object.fromEntries(demandOutlook(d, 'terraced').indicators.map((i) => [i.key, i.signal]));
+
+  it('calls an area building when it stands clearly above the country', () => {
+    const hot = series({
+      hpi: months((n) => 100 * Math.pow(1.05, n / 12), (n) => (n >= 70 ? 240 : 200), 10, 200_000),
+      population: [[2020, 200_000], [2025, 212_000]], // +1.2% a year; 12,000 residents against 600 new homes
+      earnings: [[2020, 30_000], [2025, 40_000]],
+      claimants: [['2025-06', 4.5], ['2026-06', 4.0]],
+    });
+    const o = demandOutlook(data(hot), 'terraced');
+    expect(signals(data(hot))).toEqual({ prices: 'up', sales: 'up', population: 'up', supply: 'up', affordability: 'up', earnings: 'up', jobs: 'up' });
+    expect([o.scored, o.up, o.down, o.verdict]).toEqual([7, 7, 0, 'building']);
+    expect(o.indicators[0].headline).toContain('All homes: +5.0% in a year');
+  });
+
+  it('calls an area easing when it stands clearly below', () => {
+    const cold = series({
+      hpi: months((n) => 100 * Math.pow(0.98, n / 12), (n) => (n >= 70 ? 150 : 200), 100, 420_000),
+      population: [[2020, 200_000], [2025, 199_000]],
+      earnings: [[2020, 30_000], [2025, 33_000]],
+      claimants: [['2025-06', 4.0], ['2026-06', 4.6]],
+    });
+    const o = demandOutlook(data(cold), 'terraced');
+    expect(signals(data(cold))).toEqual({ prices: 'down', sales: 'down', population: 'down', supply: 'down', affordability: 'down', earnings: 'down', jobs: 'down' });
+    expect(o.verdict).toBe('easing');
+  });
+
+  it('calls an area that matches the country level on every measure', () => {
+    const same = series({ ...country, hpi: country.hpi.map((r) => ({ ...r, sales: r.sales === null ? null : r.sales / 250, newBuild: r.newBuild === null ? null : r.newBuild / 250 })), population: [[2020, 224_000], [2025, 229_656]] });
+    const o = demandOutlook(data(same), 'terraced');
+    expect(o.indicators.every((i) => i.signal === 'flat')).toBe(true);
+    expect(o.verdict).toBe('mixed');
+  });
+
+  it('judges sales against the country, so unregistered recent sales do not read as a slump', () => {
+    // Both fall 30% in the latest year because recent sales are not all registered yet.
+    const lagging = (base: number) => (n: number) => (n >= 70 ? base * 0.7 : base);
+    const d: DemandData = { ...data(series({ ...country, hpi: months((n) => 100 * Math.pow(1.02, n / 12), lagging(200), 20, 300_000) })), country: { ...country, hpi: months((n) => 100 * Math.pow(1.02, n / 12), lagging(50_000), 5_000, 300_000) } };
+    expect(signals(d)['sales']).toBe('flat');
+  });
+
+  it('uses the index for the property type when the area has one', () => {
+    const typed = series({ ...country, hpi: country.hpi.map((r, n) => ({ ...r, byType: { terraced: 100 * Math.pow(1.06, n / 12) } })) });
+    const withType: DemandData = { ...data(typed), country: { ...country, hpi: country.hpi.map((r) => ({ ...r, byType: { terraced: r.index } })) } };
+    const terraced = demandOutlook(withType, 'terraced').indicators[0];
+    expect(terraced.signal).toBe('up');
+    expect(terraced.headline).toContain('Terraced houses: +6.0% in a year');
+    const detached = demandOutlook(withType, 'detached').indicators[0];
+    expect(detached.signal).toBe('flat');
+    expect(detached.headline).toContain('All homes: +2.0% in a year');
+  });
+
+  it('leaves a measure unscored when its figures are missing, and gives no verdict on too few', () => {
+    const o = demandOutlook(data(series({ hpi: country.hpi })), 'terraced');
+    expect(o.indicators.filter((i) => i.signal === null).map((i) => i.key)).toEqual(['population', 'supply', 'affordability', 'earnings', 'jobs']);
+    expect(o.verdict).toBe('unknown');
+    expect(demandOutlook(data(series({})), 'terraced').scored).toBe(0);
+  });
+});
+
+describe('places around the house', () => {
+  const LAT = 52.5858;
+  const LNG = -0.2408;
+  /** A map object a given number of metres north of the house. */
+  const at = (metresNorth: number, tags: Record<string, string>, way = false): OsmElement => {
+    const lat = LAT + metresNorth / 111_195;
+    return way ? { center: { lat, lon: LNG }, tags } : { lat, lon: LNG, tags };
+  };
+  const near: OsmElement[] = [
+    at(640, { amenity: 'school', name: 'Gladstone Primary Academy', 'isced:level': '0;1', min_age: '2', max_age: '11', 'ref:edubase': '143859', 'school:type': 'academy;special', 'operator:type': 'private' }),
+    at(35, { amenity: 'school', name: "Queen's Drive Infant School", school: 'primary', min_age: '5', max_age: '7', 'ref:edubase': '110723' }, true),
+    at(40, { amenity: 'school', name: "Queen's Drive Infant School" }), // the same school mapped a second time
+    at(530, { amenity: 'school', name: 'Thomas Deacon Academy', 'isced:level': '1;2;3', min_age: '7', max_age: '19' }),
+    at(900, { amenity: 'school', name: 'Hill House', 'isced:level': '2', fee: 'yes' }),
+    at(300, { amenity: 'school' }), // no name: cannot be shown
+    at(170, { amenity: 'parking', access: 'private' }),
+    at(225, { amenity: 'parking' }), // unmarked: most likely a shop or staff car park
+    at(120, { amenity: 'parking', parking: 'street_side', fee: 'yes' }),
+    at(410, { amenity: 'parking', name: 'Brook Street Car Park', fee: 'yes', capacity: '180' }),
+    at(700, { amenity: 'parking', operator: 'City Council', fee: 'no' }),
+    at(570, { amenity: 'doctors', name: 'Park Medical Centre' }),
+    at(260, { amenity: 'pharmacy', name: 'Boots' }),
+    at(480, { shop: 'supermarket', name: 'Aldi' }),
+    at(900, { shop: 'supermarket', name: 'Tesco' }),
+    at(350, { leisure: 'park', name: 'Central Park' }),
+    at(150, { highway: 'bus_stop' }),
+    at(390, { highway: 'bus_stop' }),
+    at(600, { highway: 'bus_stop' }), // beyond 400 m
+  ];
+  const far: OsmElement[] = [
+    at(2060, { railway: 'station', name: 'Peterborough (NVR)', usage: 'tourism' }),
+    at(1400, { railway: 'station', name: 'Peterborough', network: 'National Rail' }),
+    at(9000, { railway: 'station', name: 'Whittlesea' }),
+    at(3960, { amenity: 'hospital', name: 'City Care Centre' }),
+    at(5200, { amenity: 'hospital', name: 'Peterborough City Hospital', emergency: 'yes' }),
+  ];
+
+  it('lists named schools nearest first, once each, with phase, ages and reference number', () => {
+    const p = buildPlaces(LAT, LNG, near, far);
+    expect(p.schools.map((s) => s.name)).toEqual(["Queen's Drive Infant School", 'Thomas Deacon Academy', 'Gladstone Primary Academy', 'Hill House']);
+    expect(p.schools[0]).toMatchObject({ phase: 'Primary', ages: 'ages 5 to 7', urn: '110723', independent: false });
+    expect(p.schools[0].distanceM).toBeGreaterThan(30);
+    expect(p.schools[0].distanceM).toBeLessThan(40);
+    expect(p.schools[1]).toMatchObject({ phase: 'All-through', urn: null });
+    // An academy run by a trust is tagged as privately operated; that must not read as fee-paying.
+    expect(p.schools[2]).toMatchObject({ kind: 'academy, special school', independent: false });
+    expect(p.schools[3]).toMatchObject({ phase: 'Secondary', independent: true });
+    expect(p.schoolCount).toBe(4);
+  });
+
+  it('keeps only car parks the public can use', () => {
+    const p = buildPlaces(LAT, LNG, near, far);
+    expect(p.carParks.map((c) => [c.name, c.fee, c.capacity])).toEqual([
+      ['Brook Street Car Park', 'yes', 180],
+      ['City Council car park', 'no', null],
+    ]);
+  });
+
+  it('picks the nearest working station and the nearest emergency hospital', () => {
+    const p = buildPlaces(LAT, LNG, near, far);
+    expect(p.stations.map((s) => s.name)).toEqual(['Peterborough', 'Whittlesea']);
+    expect(p.hospitals[0].name).toBe('City Care Centre');
+    expect(p.emergency?.name).toBe('Peterborough City Hospital');
+    expect([p.busStops, p.supermarketCount, p.supermarket?.name, p.park?.name, p.pharmacy?.name, p.doctors[0].name]).toEqual([2, 2, 'Aldi', 'Central Park', 'Boots', 'Park Medical Centre']);
+  });
+
+  it('says which half is missing when one lookup fails, so an empty list is not read as nothing nearby', () => {
+    const p = buildPlaces(LAT, LNG, near, null);
+    expect([p.nearOk, p.farOk, p.stations.length, p.schools.length]).toEqual([true, false, 0, 4]);
+    expect(buildPlaces(LAT, LNG, null, far).nearOk).toBe(false);
+  });
+
+  it('asks for every kind of place around the point, and formats distances', () => {
+    const q = placeQueries(LAT, LNG);
+    for (const word of ['school', 'parking', 'supermarket', 'bus_stop', 'doctors']) expect(q.near).toContain(word);
+    expect(q.far).toContain('railway=station');
+    expect(q.far).toContain('amenity=hospital');
+    expect([metres(34), metres(996), metres(1401), metres(12_340)]).toEqual(['30 m', '1.0 km', '1.4 km', '12.3 km']);
+  });
+
+  it('reads parking from a listing', () => {
+    expect(parseListing('3 bed house\n£200,000\nDriveway and garage to the side').parking).toBe('offStreet');
+    expect(parseListing('2 bed terrace\n£150,000\nOn street parking, permit required').parking).toBe('onStreet');
+    expect(parseListing('2 bed terrace\n£150,000\nNo off street parking').parking).toBe('onStreet');
+    expect(parseListing('2 bed terrace\n£150,000\nClose to the station').parking).toBeNull();
+  });
+});
+
+describe('official places data', () => {
+  const LAT = 52.5746;
+  const LNG = -0.2277;
+  const north = (m: number) => LAT + m / 111_195;
+  const schools: SchoolRecord[] = [
+    ['135263', 'Thomas Deacon Academy', north(1500), LNG, 'A', 'academy', 7, 19, 2300, '', 0, '', ['O', '2023-10', 2, '', 0]],
+    ['110723', "Queen's Drive Infant School", north(300), LNG, 'P', 'community school', 5, 7, 208, '', 0, '', ['Q', '2025-02', 2, '', 0]],
+    ['143859', 'Lime Academy', north(650), LNG, 'P', 'academy', 3, 11, 423, '', 0, '', ['R', '2026-06', 3, 4, 1, '', 0]],
+    ['136398', "The King's School", north(1100), LNG, 'A', 'academy', 7, 18, 1256, 'B', 1, 'Church of England', ['O', '2024-07', 1, '', 1]],
+    ['999001', 'Hill House', north(900), LNG, 'S', 'independent (fee-paying)', 11, 18, 0, 'G', 0, '', null],
+    ['999002', 'Ysgol Feithrin', north(1200), LNG, '', 'school in Wales', 0, 0, 0, '', 0, '', null],
+    ['999003', 'Failing Academy', north(1400), LNG, 'S', 'academy', 11, 16, 600, '', 0, '', ['R', '2026-02', 5, 5, 0, 'SM', 0]],
+    ['999004', 'Too Far Primary', north(2500), LNG, 'P', 'academy', 4, 11, 200, '', 0, '', null],
+  ];
+
+  it('lists schools within a mile, nearest first, with the register details', () => {
+    const list = schoolsNear(schools, LAT, LNG);
+    expect(list.map((s) => s.name)).toEqual(["Queen's Drive Infant School", 'Lime Academy', 'Hill House', "The King's School", 'Ysgol Feithrin', 'Failing Academy', 'Thomas Deacon Academy']);
+    expect(list[0]).toMatchObject({ urn: '110723', phase: 'Primary', ages: 'ages 5 to 7', kind: 'community school', pupils: 208, independent: false, wales: false });
+    expect(list[2]).toMatchObject({ independent: true, gender: 'girls', pupils: null, ofsted: null });
+    expect(list[3]).toMatchObject({ gender: 'boys', selective: true, faith: 'Church of England' });
+    expect(list[4]).toMatchObject({ wales: true, phase: '', ages: '' });
+  });
+
+  it('reports each Ofsted result the way Ofsted gave it', () => {
+    expect(ofstedResult(['O', '2023-10', 2, '', 0])).toEqual({ text: 'Good', inspected: 'Oct 2023', concern: '', weak: false, former: false });
+    expect(ofstedResult(['Q', '2025-02', 3, '', 0])).toMatchObject({ text: 'Quality of education: Requires improvement', weak: true });
+    expect(ofstedResult(['R', '2026-06', 3, 4, 1, '', 0])).toMatchObject({ text: 'Curriculum and teaching: Expected standard; achievement: Needs attention', inspected: 'Jun 2026', weak: true });
+    expect(ofstedResult(['R', '2026-02', 5, 5, 0, 'SM', 0])).toMatchObject({ text: 'Curriculum and teaching: Urgent improvement; achievement: Urgent improvement; safeguarding not met', concern: 'in special measures', weak: true });
+    expect(ofstedResult(['O', '2024-07', 1, '', 1])).toMatchObject({ text: 'Outstanding', weak: false, former: true });
+    expect(ofstedResult(null)).toBeNull();
+  });
+
+  it('loads one file of schools, or the neighbours too near the edge of a square', () => {
+    expect(schoolCells(52.5746, -0.2277, 1600)).toEqual(['105_-1']);
+    expect(schoolCells(52.501, -0.2277, 1600).sort()).toEqual(['104_-1', '105_-1']);
+    expect(schoolCells(52.501, -0.001, 1600)).toHaveLength(4);
+  });
+
+  it('picks the two nearest stations of either kind', () => {
+    const stations: StationRecord[] = [['Whittlesea', north(9000), LNG, 'R'], ['Peterborough', north(1500), LNG, 'R'], ['City Tram Stop', north(700), LNG, 'M'], ['Far Away', north(40_000), LNG, 'R']];
+    expect(stationsNear(stations, LAT, LNG).map((s) => [s.name, s.kind])).toEqual([['City Tram Stop', 'Metro or tram'], ['Peterborough', 'Rail']]);
+    expect(stationsNear([stations[3]], LAT, LNG)).toEqual([]);
+  });
+
+  it('skips private hospitals and mental-health units, and finds the nearest emergency department', () => {
+    const hospitals: HospitalRecord[] = [
+      ['Sexual Health Clinic Ltd', north(1100), LNG, 'I', 0, 0],
+      ['Cavell Centre', north(2000), LNG, 'N', 0, 1],
+      ['City Care Centre', north(3000), LNG, 'N', 0, 0],
+      ['Peterborough City Hospital', north(3600), LNG, 'N', 1, 0],
+      ['Distant General', north(60_000), LNG, 'N', 1, 0],
+    ];
+    const h = hospitalsNear(hospitals, LAT, LNG);
+    expect(h.hospitals.map((x) => x.name)).toEqual(['City Care Centre', 'Peterborough City Hospital']);
+    expect(h.emergency?.name).toBe('Peterborough City Hospital');
+    expect(hospitalsNear([hospitals[4]], LAT, LNG)).toEqual({ hospitals: [], emergency: null });
+  });
+});
+
+describe('calculators', () => {
+  it('matches a published example: £150,000 with a 10% deposit over 25 years at 5.2% is £805 a month', () => {
+    const m = mortgage(150_000, 15_000, 5.2, 25)!;
+    expect(m.loan).toBe(135_000);
+    expect(Math.round(m.monthly)).toBe(805);
+    expect(Math.round(m.interestOnlyMonthly)).toBe(585);
+    expect(m.totalRepaid).toBeCloseTo(m.monthly * 300, 6);
+    expect(m.totalInterest).toBeCloseTo(m.totalRepaid - 135_000, 6);
+  });
+
+  it('handles a 0% rate, and gives nothing when there is nothing to borrow', () => {
+    expect(mortgage(120_000, 0, 0, 10)!.monthly).toBe(1_000);
+    expect(mortgage(150_000, 150_000, 5, 25)).toBeNull();
+    expect(mortgage(150_000, 200_000, 5, 25)).toBeNull();
+    expect(mortgage(0, 0, 5, 25)).toBeNull();
+    expect(mortgage(150_000, 15_000, 5, 0)).toBeNull();
+  });
+
+  it('breaks stamp duty into bands that add up to the total', () => {
+    const cases: [number, 'standard' | 'firstHome' | 'additional', boolean][] = [
+      [295_000, 'standard', false], [150_000, 'additional', false], [500_000, 'firstHome', false], [625_000, 'firstHome', false],
+      [1_750_000, 'standard', true], [90_000, 'standard', false], [425_000, 'firstHome', true],
+    ];
+    for (const [price, mode, abroad] of cases) {
+      const bands = sdltBreakdown(price, mode, abroad);
+      expect(Math.floor(bands.reduce((sum, b) => sum + b.tax, 0) + 1e-6)).toBe(sdlt(price, mode, abroad));
+      expect(bands.reduce((sum, b) => sum + b.slice, 0)).toBe(price);
+    }
+  });
+
+  it('shows the gov.uk example band by band: £295,000 is 0% on £125,000, 2% on £125,000 and 5% on £45,000', () => {
+    expect(sdltBreakdown(295_000, 'standard').map((b) => [b.ratePct, b.slice, b.tax])).toEqual([[0, 125_000, 0], [2, 125_000, 2_500], [5, 45_000, 2_250]]);
+    expect(sdltBreakdown(150_000, 'additional').map((b) => [b.ratePct, b.tax])).toEqual([[5, 6_250], [7, 1_750]]);
+    // First-home relief: nothing up to £300,000, 5% above, and none at all once the price passes £500,000.
+    expect(sdltBreakdown(400_000, 'firstHome').map((b) => [b.ratePct, b.slice])).toEqual([[0, 300_000], [5, 100_000]]);
+    expect(sdltBreakdown(625_000, 'firstHome')).toEqual(sdltBreakdown(625_000, 'standard'));
+    expect(sdltBreakdown(0, 'standard')).toEqual([]);
+  });
+});
+
+describe('next steps', () => {
+  const address = '24 Glebe Road, PE7 3RQ';
+
+  it('writes a viewing request with the times offered', () => {
+    const two = viewingMessage({ address, slots: ['2026-11-28T10:30', '2026-11-30T17:00'], name: 'Sam' });
+    expect(two).toContain('I would like to view 24 Glebe Road, PE7 3RQ.');
+    expect(two).toContain('- Sat 28 Nov at 10:30');
+    expect(two).toContain('- Mon 30 Nov at 17:00');
+    expect(two.endsWith('Thank you,\nSam')).toBe(true);
+    expect(viewingMessage({ address, slots: ['2026-11-28T10:30', ''], name: '' })).toContain('Would Sat 28 Nov at 10:30 work?');
+    expect(viewingMessage({ address, slots: ['', ''], name: '' })).toContain('which times are available');
+    expect(slotLabel('not a date')).toBe('');
+  });
+
+  it('puts the checks that matter for this house first', () => {
+    const plain = viewingChecklist({ inputs: { ...DEFAULT_INPUTS, parking: 'offStreet' }, floodAreas: 0, sellerYears: 12, daysListed: 10 });
+    expect(plain[0]).toContain('boiler');
+    expect(plain.some((c) => c.includes('damp'))).toBe(true);
+    const flagged = viewingChecklist({ inputs: { ...DEFAULT_INPUTS, propertyType: 'flat-maisonette', epc: 'FG', heating: 'electric', condition: 'refurbished', parking: 'onStreet' }, floodAreas: 2, sellerYears: 0.8, daysListed: 95 });
+    expect(flagged[0]).toContain('95 days');
+    for (const word of ['under three years', 'electrical certificate', 'gas supply', 'EPC F or G', 'ever flooded', 'permits', 'lease']) expect(flagged.join(' ')).toContain(word);
+    expect(flagged.length).toBeGreaterThan(plain.length);
+  });
+
+  it('writes the offer with reasons and the buyer position, and never the maximum', () => {
+    const inputs: Inputs = { ...DEFAULT_INPUTS, condition: 'dated', epc: 'E', parking: 'onStreet' };
+    const reasons = offerReasons(inputs, 75);
+    expect(reasons).toEqual(['the updating the house needs', 'its EPC rating of E', 'the lack of parking', 'the 75 days it has been on the market']);
+    const cash = offerMessage({ address, amount: 222_000, asking: 250_000, cash: true, reasons, name: 'Sam' });
+    expect(cash).toContain('I would like to offer £222,000, subject to contract and survey.');
+    expect(cash).toContain('the lack of parking and the 75 days it has been on the market.');
+    expect(cash).toContain('cash buyer');
+    expect(cash).not.toContain('246,000');
+    const mortgaged = offerMessage({ address, amount: 250_000, asking: 250_000, cash: false, reasons: [], name: '' });
+    expect(mortgaged).toContain('agreement in principle');
+    expect(mortgaged).not.toContain('The figure reflects'); // an offer at the asking price needs no justification
+    expect(offerReasons(DEFAULT_INPUTS, 10)).toEqual([]);
+  });
+
+  it('makes a calendar file and message links', () => {
+    const file = viewingCalendarFile(address, '2026-11-28T10:30', ['Look for damp; check, the roof'])!;
+    expect(file).toContain('DTSTART:20261128T103000');
+    expect(file).toContain('DTEND:20261128T110000');
+    expect(file).toContain('SUMMARY:Viewing: 24 Glebe Road\\, PE7 3RQ');
+    expect(file).toContain('- Look for damp\\; check\\, the roof');
+    expect(file.split('\r\n')[0]).toBe('BEGIN:VCALENDAR');
+    expect(viewingCalendarFile(address, '', [])).toBeNull();
+    expect(emailLink('Offer: 24 Glebe Road', 'Hello,\n£222,000')).toBe('mailto:?subject=Offer%3A%2024%20Glebe%20Road&body=Hello%2C%0A%C2%A3222%2C000');
+    expect(whatsAppLink('Hello there')).toBe('https://wa.me/?text=Hello%20there');
+  });
+
+  it('sums the report up in plain lines, and says nothing about what it does not know', () => {
+    const none: SummaryFacts = {
+      stance: null, asking: null, sellerPaid: null, sellerPaidDate: null, sellerYears: null, daysListed: null, netYieldAtTarget: null, targetYield: 5,
+      stationName: null, stationWalkMinutes: null, schools: null, schoolsGood: null, demand: null, district: 'Peterborough', floodAreas: null,
+      crimeNow: null, crimeYearAgo: null, epc: 'unknown', parking: 'unknown',
+    };
+    expect(summaryPoints(none)).toEqual([]);
+    const points = summaryPoints({
+      ...none, stance: 'above', asking: 260_000, sellerPaid: 247_500, sellerPaidDate: '2026-08-17', sellerYears: 0.3, daysListed: 80, netYieldAtTarget: 4.2,
+      stationName: 'Peterborough', stationWalkMinutes: 12, schools: 11, schoolsGood: 6, demand: 'easing', floodAreas: 2, crimeNow: 615, crimeYearAgo: 539, epc: 'FG', parking: 'onStreet',
+    });
+    const text = points.map((p) => `${p.tone}: ${p.text}`).join('\n');
+    for (const line of [
+      'bad: The asking price of £260,000 is more than the evidence supports',
+      'info: The seller paid £247,500 in Aug 2026',
+      'good: It has been for sale for 80 days',
+      'bad: As a rental it returns 4.2% a year after costs at the price to aim for, short of your 5% target',
+      'good: Peterborough station is 12 minutes on foot',
+      'good: 11 schools within a mile, 6 with a good or better Ofsted result',
+      'bad: Demand in Peterborough is easing',
+      'bad: It is within 1 km of 2 flood alert areas',
+      'bad: Recorded crime within a mile is 14% higher than a year ago',
+      'bad: An EPC of F or G',
+      'info: It has no parking of its own',
+    ]) expect(text).toContain(line);
   });
 });

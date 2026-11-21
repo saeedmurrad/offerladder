@@ -25,6 +25,8 @@ export interface Inputs {
   bathroomDownstairs: boolean;
   boxRoom: boolean;
   customAdjustPct: number;
+  /** offStreet: a drive, garage or allocated space. onStreet: none of its own. */
+  parking: 'unknown' | 'offStreet' | 'onStreet';
 
   legal: number;
   survey: number;
@@ -64,6 +66,7 @@ export const DEFAULT_INPUTS: Inputs = {
   bathroomDownstairs: false,
   boxRoom: false,
   customAdjustPct: 0,
+  parking: 'unknown',
   legal: 1500,
   survey: 600,
   initialWorks: 0,
@@ -114,6 +117,11 @@ export interface CrimeSummary {
   month: string;
   total: number;
   top: { category: string; count: number }[];
+  /** Burglaries and vehicle crimes in the month: the two that bear most on a home. */
+  burglary: number;
+  vehicle: number;
+  /** Crimes within the same mile in the same month a year earlier; null when that month could not be read. */
+  yearAgo: number | null;
 }
 
 export interface FloodSummary {
@@ -128,18 +136,136 @@ export interface Hpi {
   byType: Partial<Record<PropertyType, number>>;
 }
 
-/** Nearby places from OpenStreetMap. */
-export interface Amenities {
-  station: { name: string; distanceM: number } | null;
-  schools: number;
-  supermarkets: number;
+/** A place near the house, from OpenStreetMap. distanceM is in a straight line. */
+export interface Place {
+  name: string;
+  lat: number;
+  lng: number;
+  distanceM: number;
+}
+
+/** Ofsted's latest inspection result for a school, in words. */
+export interface OfstedResult {
+  text: string;
+  /** Month of the inspection, such as "Mar 2026". */
+  inspected: string;
+  /** "in special measures" and the like, or ''. */
+  concern: string;
+  /** True for a result below "good" or "expected", or a category of concern. */
+  weak: boolean;
+  /** The inspection was of the school this one replaced, as when a school becomes an academy. */
+  former: boolean;
+}
+
+export interface School extends Place {
+  /** The Department for Education's reference number, which links to the school's official record and Ofsted reports. */
+  urn: string | null;
+  phase: 'Primary' | 'Secondary' | 'All-through' | 'Nursery' | 'Middle' | 'Sixth form' | '';
+  ages: string;
+  /** Academy, community school, special school and so on. */
+  kind: string;
+  independent: boolean;
+  /** The fields below come from the official register only; they are empty when the school was read from the map. */
+  pupils: number | null;
+  gender: 'boys' | 'girls' | '';
+  selective: boolean;
+  faith: string;
+  ofsted: OfstedResult | null;
+  /** Schools in Wales are inspected by Estyn, not Ofsted. */
+  wales: boolean;
+}
+
+export interface Station extends Place {
+  kind: 'Rail' | 'Metro or tram';
+}
+
+export interface Hospital extends Place {
+  /** Marked on the map as having an emergency department. */
+  emergency: boolean;
+}
+
+export interface CarPark extends Place {
+  fee: 'yes' | 'no' | null;
+  capacity: number | null;
+}
+
+/** When the data that ships with the app was last built, and how current its sources are. */
+export interface PlacesMeta {
+  schoolsDate?: string;
+  ofstedAsAt?: string;
+  stationsBuilt?: string;
+  hospitalsBuilt?: string;
+}
+
+/** What is around the house. Lists are nearest first. */
+export interface Places {
+  /** True when schools, stations and hospitals came from the official data that ships with the app, false when read from the map. */
+  official: boolean;
+  /** False when the lookup for places within walking distance failed: its lists are then empty, not "none nearby". */
+  nearOk: boolean;
+  /** The same for stations and hospitals, which are looked for much further out. */
+  farOk: boolean;
+  schools: School[];
+  schoolCount: number;
+  carParks: CarPark[];
+  stations: Station[];
+  hospitals: Hospital[];
+  emergency: Hospital | null;
+  doctors: Place[];
+  pharmacy: Place | null;
+  supermarket: Place | null;
+  supermarketCount: number;
+  park: Place | null;
+  busStops: number;
+}
+
+/** A journey by road or footpath. */
+export interface Route {
+  metres: number;
+  minutes: number;
+}
+
+/** Journeys from the house to the nearest station and the nearest emergency hospital. Null where no route was found. */
+export interface Journeys {
+  stationWalk: Route | null;
+  stationDrive: Route | null;
+  hospitalDrive: Route | null;
 }
 
 export interface AreaData {
   crime: CrimeSummary | null;
   flood: FloodSummary | null;
   hpi: Hpi | null;
-  amenities: Amenities | null;
+}
+
+/** One month of the UK House Price Index for an area. */
+export interface HpiMonth {
+  month: string; // yyyy-mm
+  average: number;
+  index: number;
+  byType: Partial<Record<PropertyType, number>>;
+  /** Sales registered that month; null for the newest months, which are not counted yet. */
+  sales: number | null;
+  newBuild: number | null;
+}
+
+/** The figures behind the demand outlook for one area, oldest first. */
+export interface AreaSeries {
+  hpi: HpiMonth[];
+  /** [year, residents] from the mid-year estimates. */
+  population: [number, number][];
+  /** [year, median gross annual pay of full-time workers who live in the area]. */
+  earnings: [number, number][];
+  /** [yyyy-mm, claimants as a percentage of residents aged 16 to 64]. */
+  claimants: [string, number][];
+}
+
+/** A council area and its country, side by side. */
+export interface DemandData {
+  areaName: string;
+  countryName: string;
+  area: AreaSeries;
+  country: AreaSeries;
 }
 
 /** One analysed house, frozen at the moment it was added to the comparison. */

@@ -27,6 +27,8 @@ export interface ParsedListing {
   bathroomDownstairs: boolean;
   tenure: 'Freehold' | 'Leasehold' | null;
   chainFree: boolean;
+  /** offStreet: a drive, garage or allocated space is mentioned. onStreet: only street or permit parking is. */
+  parking: 'offStreet' | 'onStreet' | null;
   agentRent: number | null;
   pastSales: PastSale[];
 }
@@ -99,6 +101,7 @@ export function parseListing(text: string): ParsedListing {
     bathroomDownstairs: false,
     tenure: null,
     chainFree: false,
+    parking: null,
     agentRent: null,
     pastSales: [],
   };
@@ -146,6 +149,9 @@ export function parseListing(text: string): ParsedListing {
   out.bathroomDownstairs = /\b(?:downstairs|ground[\s-]floor) bath(?:room)?\b/i.test(flat);
   out.tenure = /\bleasehold\b/i.test(flat) && !/\bfreehold\b/i.test(flat) ? 'Leasehold' : /\bfreehold\b/i.test(flat) ? 'Freehold' : null;
   out.chainFree = /\b(?:no (?:onward |upward )?chain|chain[\s-]free)\b/i.test(flat);
+
+  if (/\b(?:drive ?way|off[\s-]?(?:street|road) parking|garage|car ?port|allocated (?:parking|space)|private parking|parking space|parking for \w+ (?:cars?|vehicles?))\b/i.test(flat) && !/\bno (?:off[\s-]?(?:street|road) parking|garage|drive ?way)\b/i.test(flat)) out.parking = 'offStreet';
+  else if (/\b(?:on[\s-]?(?:street|road) parking|permit parking|residents'? (?:permit|parking)|street parking|no (?:off[\s-]?(?:street|road) )?parking)\b/i.test(flat)) out.parking = 'onStreet';
 
   const rent = flat.match(/£\s?([\d,]{3,5})\s*(?:pcm|per calendar month|per month|p\/m)/i);
   if (rent) out.agentRent = money(rent[1]);

@@ -17,15 +17,31 @@ It is a static Angular 21 app (standalone components, signals) styled with Tailw
    - Aim for: halfway between the low end and the middle.
    - Maximum: the middle value. Above it the nearby sales no longer support the price.
    - None of the three goes above the asking price.
+   **Then says it in short and helps you act.** An "In short" list gives the handful of findings that should change what you do, marked as in your favour or a reason for care. "What to do next" writes the viewing request to the estate agent (copy, email or WhatsApp, and a calendar entry), gives a viewing checklist tailored to the house with room for notes, and writes the offer in writing at the opening, target or maximum figure. Nothing is sent by the app; the buttons open the buyer's own email or WhatsApp.
 5. **Works out the rental return.** Stamp duty for the chosen buyer type, cash in, gross and net yield, optional mortgage cash flow, and the highest price that still meets a target net yield.
 6. **Reads the seller's position.** Short ownership: an estimated break-even. Long ownership: no break-even pressure. Days on the market if a listing date is given.
-7. **Adds area context.** The official UK House Price Index for the council area, crimes recorded within a mile in the latest month, Environment Agency flood areas within 1 km, the nearest station, schools and supermarkets, and links to the EPC register, rent listings, licensing, flood check and title register.
-8. **Compares up to three houses.** Add analysed houses to a shortlist, see them side by side, which is best for what, and one pick with its reasons. Scoring: price against nearby sales 30, rental return 25, cash needed 10, space for the money 10, condition 10, crime 10, days on the market 5; small gaps count for less than large ones.
-9. **Explains the jargon.** A searchable glossary of about 60 property terms in plain English.
+7. **Checks the location.** Every school within a mile with its type, ages, pupil numbers and latest Ofsted result; the nearest station with the journey on foot and by car; the nearest emergency department with the drive. These come from official data that ships with the app, so they appear at once. Bus stops, public car parks (shown when the house has no parking of its own), GP, pharmacy, supermarkets and parks follow from the public map server, which can take up to a minute and can be retried if it does not answer.
+   **And adds area context.** The official UK House Price Index for the council area, crimes recorded within a mile in the latest month against the same month a year earlier, Environment Agency flood areas within 1 km, and links to the EPC register, rent listings, licensing, flood check and title register.
+8. **Reads the demand outlook.** Seven measures for the council area, each set against England or Wales: price growth for the property type, sales activity, population growth, new homes sold against new residents, price against earnings, earnings growth, and the claimant rate. Each is marked as pointing to rising demand, falling demand or level, and three more up than down (or down than up) gives the overall reading. The thresholds are in `src/app/demand.ts` (`DEMAND_RULES`). It reads the whole council area, not one house, and it is not a forecast.
+9. **Has two stand-alone calculators.** A mortgage repayment calculator (price, deposit, term, rate: monthly payment, interest-only payment, total repaid and total interest) and a stamp duty calculator with a band-by-band breakdown. They start from the house being analysed and work without one.
+10. **Compares up to three houses.** Add analysed houses to a shortlist, see them side by side, which is best for what, and one pick with its reasons. Scoring: price against nearby sales 30, rental return 25, cash needed 10, space for the money 10, condition 10, crime 10, days on the market 5; small gaps count for less than large ones.
+11. **Explains the jargon.** A searchable glossary of about 60 property terms in plain English.
 
 ## Importing a listing
 
 Paste the text of a Zoopla, Rightmove or OnTheMarket listing page (select all, copy) into "Import from a listing". A link on its own cannot be read: the app runs in the browser, and the portals do not let another website open their pages (Zoopla also refuses requests from servers). If a link is pasted, the app says so and offers to open the listing so its text can be copied. The tool reads the asking price, street, bedrooms, type, date listed, EPC, heating, condition and past sale prices, then matches the past sales against Land Registry to identify the house number and full postcode, which listings usually hide. The text is parsed in your browser; nothing is fetched from the portals.
+
+## Data that ships with the app
+
+Schools, Ofsted results, stations and hospitals are read from files in `public/data/places/`, not from a live service, so the Location section is quick and does not depend on anyone else's server. Schools are split into squares of half a degree, and the app loads only the one to four squares around the house.
+
+Refresh them about once a month and commit what changes:
+
+```bash
+node scripts/build-places-data.mjs
+```
+
+The script downloads each source fresh (about 80 MB in all), needs Node 20 or later and no packages, and leaves an existing file untouched if its source cannot be reached. `public/data/places/meta.json` records how current each source is, and the report shows those dates. If the files cannot be read, the app falls back to OpenStreetMap for everything.
 
 ## Floor areas
 
@@ -47,7 +63,16 @@ Then press "Keep only similar size (±25%)". With four or more areas the valuati
 | Crime | [data.police.uk](https://data.police.uk/) |
 | Flood areas | [Environment Agency flood-monitoring API](https://environment.data.gov.uk/flood-monitoring/doc/reference) |
 | Council-area price index | [UK House Price Index](https://landregistry.data.gov.uk/app/ukhpi) (HM Land Registry, ONS) |
-| Stations, schools, supermarkets | [OpenStreetMap](https://www.openstreetmap.org/copyright) via the Overpass API |
+| Sales counts, new-build sales, index by property type | [UK House Price Index](https://landregistry.data.gov.uk/app/ukhpi) (HM Land Registry, ONS) |
+| Population, earnings, claimant count | [Nomis](https://www.nomisweb.co.uk/) (ONS): mid-year population estimates, Annual Survey of Hours and Earnings, claimant count |
+| Schools | [Get Information About Schools](https://get-information-schools.service.gov.uk/) (Department for Education), shipped with the app |
+| Ofsted results | [State-funded school inspections and outcomes](https://www.gov.uk/government/statistical-data-sets/monthly-management-information-ofsteds-school-inspections-outcomes) (Ofsted), shipped with the app |
+| Stations | [NaPTAN](https://www.gov.uk/government/publications/national-public-transport-access-node-schema) (Department for Transport), shipped with the app |
+| Hospitals | [NHS website datasets](https://www.nhs.uk/about-us/nhs-website-datasets/) (NHS England); emergency departments and Welsh hospitals from OpenStreetMap; shipped with the app |
+| Car parks, GPs, shops, parks, bus stops | [OpenStreetMap](https://www.openstreetmap.org/copyright) via the Overpass API |
+| Walking and driving journeys | OpenStreetMap routing ([FOSSGIS](https://routing.openstreetmap.de/)) |
+
+Rent levels by council area (the ONS Price Index of Private Rents) are not published through an API a browser can call, so the demand outlook links to the ONS page for the area instead.
 
 Zoopla, Rightmove and OnTheMarket do not offer a free public API and their terms prohibit scraping, so the tool links to their searches instead of reading them.
 

@@ -32,6 +32,64 @@ export function sdlt(price: number, mode: SdltMode, nonResident = false): number
   return Math.floor(tax + 1e-6); // HMRC rounds down to the pound
 }
 
+export interface SdltBand {
+  from: number;
+  /** Infinity for the top band. */
+  to: number;
+  ratePct: number;
+  /** The part of the price that falls in this band, and the tax on it. */
+  slice: number;
+  tax: number;
+}
+
+/** The same sum as `sdlt`, shown band by band. Only the bands the price reaches are returned. */
+export function sdltBreakdown(price: number, mode: SdltMode, nonResident = false): SdltBand[] {
+  if (!(price > 0)) return [];
+  let extra = nonResident ? TAX.nonResidentSurcharge : 0;
+  // First-home relief is all or nothing: over the cap, the standard bands apply to the whole price.
+  const relief = mode === 'firstHome' && price <= TAX.firstHomeCap;
+  if (mode === 'additional') extra += TAX.additionalSurcharge;
+  const bands: [number, number][] = relief
+    ? [
+        [TAX.firstHomeNilBand, 0],
+        [TAX.firstHomeCap, 0.05],
+      ]
+    : TAX.bands;
+  const out: SdltBand[] = [];
+  let lower = 0;
+  for (const [upper, rate] of bands) {
+    if (price > lower) {
+      const slice = Math.min(price, upper) - lower;
+      out.push({ from: lower, to: upper, ratePct: Math.round((rate + extra) * 1000) / 10, slice, tax: Math.round(slice * (rate + extra) * 100) / 100 });
+    }
+    lower = upper;
+  }
+  return out;
+}
+
+export interface Mortgage {
+  loan: number;
+  /** Capital and interest: the loan is cleared at the end of the term. */
+  monthly: number;
+  /** Interest only: the loan is still owed in full at the end. */
+  interestOnlyMonthly: number;
+  totalRepaid: number;
+  totalInterest: number;
+}
+
+/**
+ * A repayment mortgage at one fixed rate for the whole term, which no real mortgage has: a guide to the size of the payment, no more.
+ * Null when there is nothing to borrow or the term is not positive.
+ */
+export function mortgage(price: number, deposit: number, ratePct: number, years: number): Mortgage | null {
+  const loan = price - deposit;
+  const months = Math.round(years * 12);
+  if (!(price > 0) || !(loan > 0) || !(months > 0) || !(ratePct >= 0)) return null;
+  const r = ratePct / 100 / 12;
+  const monthly = r === 0 ? loan / months : (loan * r) / (1 - Math.pow(1 + r, -months));
+  return { loan, monthly, interestOnlyMonthly: loan * r, totalRepaid: monthly * months, totalInterest: monthly * months - loan };
+}
+
 export function median(values: number[]): number {
   const v = [...values].sort((a, b) => a - b);
   if (!v.length) return NaN;

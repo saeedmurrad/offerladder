@@ -1,0 +1,13 @@
+{
+  "schools": 25853,
+  "schoolsWithOfsted": 14750,
+  "schoolCells": 114,
+  "schoolsDate": "2026-11-20",
+  "ofstedAsAt": "31 October 2026",
+  "schoolsBuilt": "2026-11-20",
+  "stations": 3408,
+  "stationsBuilt": "2026-11-20",
+  "hospitals": 1028,
+  "emergencyDepartments": 239,
+  "hospitalsBuilt": "2026-11-20"
+}

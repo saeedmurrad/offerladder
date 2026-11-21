@@ -40,6 +40,9 @@
   @if (view() === 'compare') {
     <app-compare-view [saved]="saved()" (open)="openSaved($event)" (remove)="removeSaved($event)" (goAnalyse)="go('analyse')" />
   }
+  @if (view() === 'calculators') {
+    <app-calculators-view [startPrice]="calculatorPrice()" [startMode]="inputs().sdltMode" [startRate]="inputs().ratePct" [startDepositPct]="100 - inputs().ltvPct" [startNonResident]="inputs().nonResident" [houseLabel]="calculatorLabel()" [checkedOn]="taxCheckedOn" />
+  }
   @if (view() === 'glossary') {
     <app-glossary-view />
   }
@@ -110,10 +113,25 @@
           </label>
         </div>
         <p class="hint">Floor area is on the listing's floor plan or the EPC certificate.</p>
+        <label class="field"><span>Parking</span>
+          <select id="parking" class="input" [value]="inputs().parking" (change)="pick('parking', $event)">
+            <option value="unknown">Not sure</option>
+            <option value="offStreet">Drive, garage or own space</option>
+            <option value="onStreet">Street only, none of its own</option>
+          </select>
+        </label>
       </div>
     </section>
 
-    <section class="border-t border-line pt-5">
+    <details class="group border-t border-line pt-5" [open]="moreOpen">
+      <summary class="group-title mb-0 list-none [&::-webkit-details-marker]:hidden">
+        <app-icon name="sliders" [size]="15" />More details (optional)
+        <span class="ml-auto text-[12px] font-semibold tracking-normal text-brand normal-case group-open:hidden">Show</span>
+        <span class="ml-auto hidden text-[12px] font-semibold tracking-normal text-brand normal-case group-open:inline">Hide</span>
+      </summary>
+      <p class="hint mt-2">Condition, rent, and how you are buying. You can leave all of this; each answer sharpens the figures.</p>
+      <div class="mt-4 flex flex-col gap-6">
+    <section>
       <h2 class="group-title"><app-icon name="sliders" [size]="15" />Condition</h2>
       <div class="flex flex-col gap-3">
         <div class="flex gap-3">
@@ -193,6 +211,8 @@
         }
       </div>
     </section>
+      </div>
+    </details>
 
     <details class="group border-t border-line pt-5">
       <summary class="group-title mb-0 list-none [&::-webkit-details-marker]:hidden">
@@ -424,6 +444,25 @@
         <p class="border-t border-line bg-sunken px-4 py-3 text-[12.5px] text-muted sm:px-6"><b>Open:</b> 5% under the low end, leaving room to move. <b>Aim for:</b> halfway between the low end and the middle. <b>Maximum:</b> the middle value; above it the evidence no longer supports the price. None goes above the asking price. When this house has itself sold in the last few years, that sale counts for more than the neighbours' sales.</p>
       </article>
 
+      <!-- In short -->
+      @if (summary().length) {
+        <article id="summary" class="card card-pad">
+          <div class="section-head"><span class="icon-badge"><app-icon name="rows" /></span><h2>In short</h2></div>
+          <ul class="flex flex-col gap-2.5">
+            @for (point of summary(); track point.text) {
+              <li class="flex items-start gap-2.5 text-[15px]">
+                <span class="mt-1.5 size-2.5 shrink-0 rounded-full" [class]="point.tone === 'good' ? 'bg-brand' : point.tone === 'bad' ? 'bg-bad' : 'bg-muted'" aria-hidden="true"></span>
+                <span><span class="sr-only">{{ point.tone === 'good' ? 'Good: ' : point.tone === 'bad' ? 'Watch out: ' : '' }}</span>{{ point.text }}</span>
+              </li>
+            }
+          </ul>
+          <p class="hint mt-3">Green is in your favour, red is a reason for care. The detail behind each line is further down.</p>
+        </article>
+      }
+
+      <!-- Next steps -->
+      <app-next-steps-view [address]="fullAddress()" [houseId]="currentId()" [facts]="houseFacts()" [ladder]="ladder()" />
+
       <!-- Key figures -->
       @if (value(); as v) {
         <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -642,16 +681,136 @@
                 <tr><td>{{ d.label }}</td><td class="n">{{ gbp(d.price) }}</td><td class="n">{{ gbp(d.firstHome) }}</td><td class="n">{{ gbp(d.standard) }}</td><td class="n">{{ gbp(d.additional) }}</td></tr>
               }
             </table></div>
+            <p class="print:hidden"><button type="button" class="btn-ghost" (click)="go('calculators')"><app-icon name="receipt" [size]="16" />Try other prices in the calculators</button></p>
             <p class="hint">First home: you will live in it and have never owned a home. Only home: the only property you will own. Additional: second homes, buy-to-let when you already own, and companies. England and Northern Ireland rates as checked on <a [href]="links()?.sdlt" target="_blank" rel="noopener">gov.uk</a> on {{ taxCheckedOn }}. Wales uses Land Transaction Tax, which this tool does not calculate.</p>
           </div>
         </article>
       }
 
+      <!-- Location -->
+      <article id="location" class="card card-pad">
+        <div class="section-head"><span class="icon-badge"><app-icon name="pin" /></span><h2>Location: schools, transport, parking, health</h2></div>
+        <div class="flex flex-col gap-4">
+          @if (placesState() === 'loading') {
+            <p class="text-muted" aria-busy="true">Looking up schools, stations and hospitals around {{ g.postcode }}…</p>
+          }
+          @if (placesState() === 'failed') {
+            <div class="callout"><app-icon name="alert" /><p><b>The places around this house could not be looked up.</b> Neither the app's own data nor the map server answered. <button type="button" class="cursor-pointer font-bold underline underline-offset-2" (click)="retryPlaces()">Try again</button></p></div>
+          }
+          @if (places(); as p) {
+            <ul class="list">
+              @if (p.farOk) {
+                <li><b>Train:</b>
+                  @if (p.stations[0]; as st) {
+                    {{ st.name }}{{ st.kind === 'Rail' ? ' station' : ' (metro or tram)' }} is the nearest,
+                    @if (journeys()?.stationWalk; as w) { <b>{{ w.minutes }} minutes on foot</b> ({{ metres(w.metres) }}) }
+                    @else { {{ metres(st.distanceM) }} away in a straight line }
+                    @if (journeys()?.stationDrive; as d) { and <b>{{ d.minutes }} minutes by car</b> ({{ metres(d.metres) }}) without traffic}.
+                    @if (p.stations[1]; as second) { Next nearest: {{ second.name }}{{ second.kind === 'Rail' ? '' : ' (metro or tram)' }}, {{ metres(second.distanceM) }} in a straight line. }
+                  } @else {
+                    no station within 15 km.
+                  }
+                </li>
+                <li><b>Hospital:</b>
+                  @if (p.emergency; as h) {
+                    the nearest emergency department is at {{ h.name }}, {{ metres(h.distanceM) }} away in a straight line@if (journeys()?.hospitalDrive; as d) {, <b>{{ d.minutes }} minutes by car</b> ({{ metres(d.metres) }}) without traffic}.
+                    @if (p.hospitals[0]; as near) { @if (near.name !== h.name) { Nearest hospital of any kind: {{ near.name }}, {{ metres(near.distanceM) }}. } }
+                  } @else if (p.hospitals[0]; as h) {
+                    {{ h.name }} is {{ metres(h.distanceM) }} away in a straight line@if (journeys()?.hospitalDrive; as d) {, <b>{{ d.minutes }} minutes by car</b> ({{ metres(d.metres) }}) without traffic}. No emergency department is on record within 40 km; check where the nearest A&amp;E is.
+                  } @else {
+                    no hospital is on record within 25 km.
+                  }
+                </li>
+              }
+              <li><b>Parking:</b>
+                @switch (inputs().parking) {
+                  @case ('offStreet') { this house has its own parking. }
+                  @case ('onStreet') { this house has <b>no parking of its own</b>. }
+                  @default { not known for this house: set it under "The house" in the form. }
+                }
+                @if (inputs().parking !== 'offStreet') {
+                  @if (p.nearOk) {
+                    @if (p.carParks.length) {
+                      Public car parks within 800 m:
+                      @for (c of p.carParks; track $index; let last = $last) { {{ c.name }}, {{ metres(c.distanceM) }}@if (c.fee) { ({{ c.fee === 'yes' ? 'paid' : 'free' }}@if (c.capacity) {, {{ c.capacity }} spaces})} @else if (c.capacity) { ({{ c.capacity }} spaces)}{{ last ? '.' : ';' }} }
+                    } @else {
+                      No public car park is mapped within 800 m.
+                    }
+                  }
+                  Ask {{ g.district }} council whether the street has a residents' permit scheme and what it costs.
+                }
+              </li>
+              @if (p.nearOk) {
+                <li><b>Buses:</b> {{ p.busStops ? p.busStops + ' bus stop' + (p.busStops === 1 ? '' : 's') + ' within 400 m.' : 'no bus stop within 400 m.' }}</li>
+                <li><b>GP and pharmacy:</b>
+                  @if (p.doctors[0]; as d) { {{ d.name || 'A GP surgery' }} is {{ metres(d.distanceM) }} away. } @else { No GP surgery is mapped within 1.6 km. }
+                  @if (p.pharmacy; as ph) { Nearest pharmacy: {{ ph.name || 'unnamed' }}, {{ metres(ph.distanceM) }}. }
+                </li>
+                <li><b>Shops and green space:</b>
+                  @if (p.supermarket; as sm) { {{ p.supermarketCount }} supermarket{{ p.supermarketCount === 1 ? '' : 's' }} within 1 km; the nearest is {{ sm.name || 'unnamed' }}, {{ metres(sm.distanceM) }}. } @else { No supermarket within 1 km. }
+                  @if (p.park; as pk) { Nearest park: {{ pk.name }}, {{ metres(pk.distanceM) }}. } @else { No named park within 800 m. }
+                </li>
+              } @else if (extrasState() === 'loading') {
+                <li class="text-muted" aria-busy="true">Looking up car parks, bus stops, GPs and shops. These come from a public map server that is slow at busy times, so they can take up to a minute.</li>
+              }
+            </ul>
+            @if (extrasState() === 'failed' && !p.nearOk) {
+              <div class="callout"><app-icon name="alert" /><p><b>The map server did not answer.</b> Car parks, bus stops, GPs and shops could not be looked up this time. <button type="button" class="cursor-pointer font-bold underline underline-offset-2" (click)="retryPlaces()">Try again</button></p></div>
+            }
+            @if (p.official || p.nearOk) {
+              <div>
+                <h3 class="mb-2 text-[14px] font-bold">Schools within a mile@if (p.schoolCount > p.schools.length) { <span class="font-medium text-muted"> (nearest {{ p.schools.length }} of {{ p.schoolCount }})</span>}</h3>
+                @if (p.schools.length) {
+                  <div class="scroll-x"><table class="tbl">
+                    <tr><th>School</th><th>Type</th><th class="n">Distance</th>@if (p.official) { <th>Latest Ofsted result</th> }<th>Links</th></tr>
+                    @for (sc of p.schools; track sc.urn ?? sc.name) {
+                      <tr>
+                        <td class="whitespace-normal! font-medium">{{ sc.name }}</td>
+                        <td class="whitespace-normal!">{{ schoolLine(sc) || 'Not stated' }}</td>
+                        <td class="n">{{ metres(sc.distanceM) }}</td>
+                        @if (p.official) {
+                          <td class="whitespace-normal!">
+                            @if (sc.ofsted; as o) {
+                              <span [class]="o.weak ? 'font-semibold text-bad' : 'font-semibold'">{{ o.text }}</span>@if (o.concern) { <span class="text-bad">, {{ o.concern }}</span>}
+                              <span class="text-muted"> ({{ o.inspected }}{{ o.former ? ', as its predecessor school' : '' }})</span>
+                            } @else if (sc.wales) {
+                              <span class="text-muted">Inspected by Estyn, not Ofsted</span>
+                            } @else if (sc.independent) {
+                              <span class="text-muted">Not in Ofsted's state-school figures</span>
+                            } @else {
+                              <span class="text-muted">No result on record yet</span>
+                            }
+                          </td>
+                        }
+                        <td>@if (sc.urn) { @if (!sc.wales) { <a [href]="schoolOfsted(sc)" target="_blank" rel="noopener">Reports</a> · } <a [href]="schoolRecord(sc)" target="_blank" rel="noopener">Details</a> } @else { n/a }</td>
+                      </tr>
+                    }
+                  </table></div>
+                  <p class="hint mt-2">Distances are in a straight line. Living near a school does not guarantee a place: check the admission area and last year's cut-off distance with {{ g.district }} council.
+                    @if (p.official) { Ofsted stopped giving one overall grade in September 2024 and moved to report cards in November 2025, so each result is shown the way Ofsted gave it. }
+                  </p>
+                } @else {
+                  <p>No school is on record within a mile.</p>
+                }
+              </div>
+            }
+            <p class="hint">
+              @if (p.official) {
+                Schools: Department for Education register@if (placesMeta()?.schoolsDate; as d) { of {{ day(d) }}}@if (placesMeta()?.ofstedAsAt; as o) {, Ofsted results as at {{ o }}}. Stations: Department for Transport. Hospitals: NHS England, with emergency departments and Welsh hospitals from OpenStreetMap. Car parks, bus stops, GPs and shops: OpenStreetMap, which volunteers keep up to date, so something recently opened or closed may be missing.
+              } @else {
+                Places come from OpenStreetMap, which volunteers keep up to date: something recently opened or closed may be missing or wrong.
+              }
+              Journey times are for the route on the map without traffic.
+            </p>
+          }
+        </div>
+      </article>
+
       <!-- Area -->
       <article id="area" class="card card-pad">
         <div class="section-head"><span class="icon-badge"><app-icon name="pin" /></span><h2>The area</h2></div>
         <ul class="list">
-          @if (areaLoading()) { <li class="text-muted">Loading price index, crime, flood and nearby places…</li> }
+          @if (areaLoading()) { <li class="text-muted">Loading price index, crime and flood data…</li> }
           <li>{{ g.ward }} ward, {{ g.district }}. Neighbourhood: {{ g.lsoa }}.
             @if (links()?.deprivation) { <a [href]="links()?.deprivation" target="_blank" rel="noopener">Deprivation ranking</a>. }
           </li>
@@ -660,16 +819,12 @@
               @if (h.byType[inputs().propertyType]; as typeAvg) { Average for this property type: {{ gbp(typeAvg) }}. }
             </li>
           }
-          @if (area()?.amenities; as am) {
-            <li><b>Nearby:</b>
-              @if (am.station; as st) { {{ st.name }} station is {{ (st.distanceM / 1000).toFixed(1) }} km away. } @else { No railway station within 3 km. }
-              {{ am.schools }} school{{ am.schools === 1 ? '' : 's' }} and {{ am.supermarkets }} supermarket{{ am.supermarkets === 1 ? '' : 's' }} within 1 km (OpenStreetMap).
-            </li>
-          }
           @if (area()?.crime; as c) {
             <li><b>{{ c.total }} crimes</b> recorded within one mile in {{ c.month }}. Most common:
               @for (t of c.top; track t.category; let last = $last) { {{ t.category }} ({{ t.count }}){{ last ? '.' : ',' }} }
-              A city-centre mile always scores high, so compare with other houses you analyse.
+              @if (c.yearAgo !== null) { That is <b>{{ crimeChange(c.total, c.yearAgo) }}</b> the same month a year earlier ({{ c.yearAgo }}). }
+              Of this month's, {{ c.burglary }} {{ c.burglary === 1 ? 'was a burglary' : 'were burglaries' }} and {{ c.vehicle }} vehicle crime.
+              This is a count, not a rate per resident, and a city-centre mile always scores high, so compare it with other houses you analyse.
             </li>
           } @else if (!areaLoading()) {
             <li>Crime data was not available for this point.</li>
@@ -682,6 +837,51 @@
             }
           }
         </ul>
+      </article>
+
+      <!-- Demand outlook -->
+      <article id="demand" class="card card-pad">
+        <div class="section-head"><span class="icon-badge"><app-icon name="chart" /></span><h2>Demand outlook for {{ g.district }}</h2></div>
+        <div class="flex flex-col gap-4">
+          @if (outlook(); as o) {
+            <p class="text-[15px]">
+              @switch (o.verdict) {
+                @case ('building') { <b class="text-brand">Demand pressure is building.</b> }
+                @case ('easing') { <b class="text-bad">Demand pressure is easing.</b> }
+                @case ('mixed') { <b>The signs are mixed.</b> }
+                @case ('unknown') { <b>Too few figures to call it.</b> }
+              }
+              Of {{ o.scored }} measures, <b>{{ o.up }}</b> point{{ o.up === 1 ? 's' : '' }} to rising demand and <b>{{ o.down }}</b> to falling; the rest are level.
+            </p>
+            <ul class="flex flex-col divide-y divide-line rounded-xl border border-line">
+              @for (i of o.indicators; track i.key) {
+                <li class="flex flex-col gap-1.5 px-3 py-3 sm:flex-row sm:items-start sm:gap-4 sm:px-4">
+                  <div class="flex shrink-0 items-center justify-between gap-2 sm:w-52 sm:flex-col sm:items-start sm:justify-start">
+                    <b class="text-[14px]">{{ i.label }}</b>
+                    @switch (i.signal) {
+                      @case ('up') { <span class="pill border-brand/40 bg-brand-soft text-brand">▲ Rising demand</span> }
+                      @case ('down') { <span class="pill border-bad/30 bg-bad-soft text-bad">▼ Falling demand</span> }
+                      @case ('flat') { <span class="pill text-muted">● Level</span> }
+                      @default { <span class="pill text-muted">No data</span> }
+                    }
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-[14.5px]">{{ i.headline }}</p>
+                    @if (i.detail) { <p class="mt-0.5 text-[13px] text-muted">{{ i.detail }}</p> }
+                    <p class="mt-0.5 text-[11.5px] text-muted">Source: {{ i.source }}</p>
+                  </div>
+                </li>
+              }
+            </ul>
+            <p class="hint">This reads the whole council area, not this house or street, and it shows where things stand today, not a forecast: no public figure can tell you what a house will be worth in a few years. An area counts as rising or falling only when it stands clearly apart from {{ g.country }}.
+              @if (links()?.localHousing; as href) { Rent levels and rent growth are not available as open data for this tool to read: see <a [href]="href" target="_blank" rel="noopener">the ONS page for {{ g.district }}</a>. }
+            </p>
+          } @else if (demandLoading()) {
+            <p class="text-muted" aria-busy="true">Loading prices, sales, population, earnings and jobs for {{ g.district }}…</p>
+          } @else {
+            <p>The figures for {{ g.district }} could not be loaded. Analyse the house again to retry.</p>
+          }
+        </div>
       </article>
 
       <!-- Checks -->

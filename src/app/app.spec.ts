@@ -2,7 +2,7 @@ import { assumedFloorArea, evidenceGapPct, mortgage, offerLadder, ownSale, ownSa
 import { compare } from './compare';
 import { demandOutlook } from './demand';
 import { GLOSSARY } from './glossary';
-import { matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
+import { headlineAddress, matchHouse, parseListing, pastedLink, streetPostcodes } from './listing-import';
 import { AreaSeries, Comp, DEFAULT_INPUTS, DemandData, HpiMonth, Inputs, Sale, Snapshot } from './models';
 import { emailLink, offerMessage, offerReasons, slotLabel, summaryPoints, SummaryFacts, viewingCalendarFile, viewingChecklist, viewingMessage, whatsAppLink } from './next-steps';
 import { applyPastedAreas, parsePastedAreas } from './paste';
@@ -762,5 +762,41 @@ describe('next steps', () => {
       'bad: An EPC of F or G',
       'info: It has no parking of its own',
     ]) expect(text).toContain(line);
+  });
+});
+
+describe('a shared listing headline', () => {
+  // What Chrome's Share button puts on the clipboard: the page title and a short link.
+  const SHARED = 'Burghley Road, Peterborough, Cambridgeshire PE1, 2 bed end terrace house for sale, £150,000 - Zoopla https://share.google/jpJZyimNVBbX4LXiS';
+
+  it('reads the price, address, bedrooms and type from a Zoopla headline with its link', () => {
+    expect(pastedLink(SHARED)).toBeNull(); // it carries real details, so it is not treated as a bare link
+    const p = parseListing(SHARED);
+    expect(p).toMatchObject({ source: 'Zoopla', asking: 150_000, street: 'Burghley Road', places: ['Peterborough', 'Cambridgeshire'], outcode: 'PE1', postcode: null, houseNumber: null, bedrooms: 2, propertyType: 'terraced' });
+  });
+
+  it('reads the same headline split over lines, as a phone shares it', () => {
+    const p = parseListing('Burghley Road, Peterborough, Cambridgeshire PE1, 2 bed end terrace house for sale, £150,000 - Zoopla\nhttps://www.zoopla.co.uk/for-sale/details/74203533/');
+    expect(p).toMatchObject({ asking: 150_000, street: 'Burghley Road', outcode: 'PE1', bedrooms: 2 });
+  });
+
+  it('reads Rightmove and OnTheMarket headlines', () => {
+    expect(headlineAddress('3 bedroom detached bungalow for sale in Bowmore, PA43')).toBe('Bowmore, PA43');
+    const rm = parseListing('4 bedroom semi-detached house for sale in Western Avenue, Peterborough, PE1 | Rightmove https://www.rightmove.co.uk/properties/174717416');
+    expect(rm).toMatchObject({ source: 'Rightmove', asking: null, street: 'Western Avenue', places: ['Peterborough'], outcode: 'PE1', bedrooms: 4, propertyType: 'semi-detached' });
+    const otm = parseListing('Western Avenue, Peterborough 4 bed semi-detached house for sale - £270,000');
+    expect(otm).toMatchObject({ asking: 270_000, street: 'Western Avenue', places: ['Peterborough'], bedrooms: 4, propertyType: 'semi-detached' });
+  });
+
+  it('does not invent an address from a line that has none', () => {
+    expect(headlineAddress('2 bed end terrace house for sale, £150,000 - Zoopla')).toBeNull();
+    expect(headlineAddress('Check out this lovely home')).toBeNull();
+    expect(parseListing('2 bed house for sale, £150,000').street).toBeNull();
+  });
+
+  it('still reads a whole listing page as before', () => {
+    const p = parseListing('3 bed terraced house for sale\nBurghley Road, Peterborough PE1\n£159,950\nAdded on 02/10/2026\nSold February 1999 £34,000');
+    expect(p).toMatchObject({ asking: 159_950, street: 'Burghley Road', outcode: 'PE1', bedrooms: 3, listedDate: '2026-10-02' });
+    expect(p.pastSales).toHaveLength(1);
   });
 });

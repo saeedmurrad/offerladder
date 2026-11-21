@@ -445,7 +445,10 @@ export class App {
       boxRoom: false,
       rentPcm: null,
     }));
-    const rentHint = p.agentRent ? ` The agent mentions ${this.gbp(p.agentRent)} a month in rent; check that against live rents before using it.` : '';
+    // A browser's Share button sends the headline and a link, not the page: say what that leaves out.
+    const headlineOnly = this.listingText().trim().length < 400 && !p.listedDate && !p.pastSales.length;
+    const headlineHint = headlineOnly ? ' Only the listing\'s headline was pasted, so the date listed, floor area, EPC and past sales are not known. Paste the whole page to add them.' : '';
+    const rentHint = headlineHint + (p.agentRent ? ` The agent mentions ${this.gbp(p.agentRent)} a month in rent; check that against live rents before using it.` : '');
 
     if (p.postcode && p.houseNumber) {
       this.importNote.set(`Full address found in the listing.${rentHint}`);

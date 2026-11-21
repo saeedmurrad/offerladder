@@ -77,14 +77,35 @@ function looksLikeAddress(line: string): boolean {
 }
 
 /**
+ * The address inside a listing's headline, which is all a browser's Share button sends. The three sites word it differently:
+ *   Zoopla       "Burghley Road, Peterborough, Cambridgeshire PE1, 2 bed end terrace house for sale, £150,000 - Zoopla"
+ *   Rightmove    "3 bedroom detached bungalow for sale in Bowmore, PA43"
+ *   OnTheMarket  "Western Avenue, Peterborough 4 bed semi-detached house for sale - £270,000"
+ */
+export function headlineAddress(line: string): string | null {
+  if (!/\bfor sale\b/i.test(line)) return null;
+  const text = line
+    .replace(/\s[-|–]\s*(?:zoopla|rightmove|onthemarket)\b.*$/i, '')
+    .replace(/[\s,–-]*£\s?[\d,]+.*$/, '')
+    .trim();
+  const after = /\bfor sale in\s+(.+)$/i.exec(text)?.[1];
+  const before = /^(.+?),?\s+\d{1,2}\s*bed/i.exec(text)?.[1];
+  const address = (after ?? before ?? '').replace(/[\s,]+$/, '');
+  if (!address || address.length > 110) return null;
+  // It must read like a place: a street word up front, or a postcode district at the end.
+  return STREET_WORD.test(address.split(',')[0]) || OUTCODE.test(address) ? address : null;
+}
+
+/**
  * Reads the text of a listing page that the user has copied and pasted.
  * Written against Zoopla and Rightmove detail pages; anything it cannot find stays null.
  */
 export function parseListing(text: string): ParsedListing {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // A shared headline arrives with its link on the end; the link says nothing and gets in the way of reading the line.
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/\bhttps?:\/\/\S+/gi, '').trim()).filter(Boolean);
   const flat = lines.join('\n');
   const out: ParsedListing = {
-    source: /zoopla/i.test(flat) ? 'Zoopla' : /rightmove/i.test(flat) ? 'Rightmove' : /onthemarket/i.test(flat) ? 'OnTheMarket' : null,
+    source: /zoopla/i.test(text) ? 'Zoopla' : /rightmove/i.test(text) ? 'Rightmove' : /onthemarket/i.test(text) ? 'OnTheMarket' : null,
     asking: null,
     houseNumber: null,
     street: null,
@@ -109,16 +130,22 @@ export function parseListing(text: string): ParsedListing {
   // Asking price: the first large £ figure that is not a rent.
   const priceIndex = lines.findIndex((l) => /^(?:guide price|offers (?:over|in excess of|in the region of)|oieo|oiro|from)?\s*£\s?[\d,]{5,}$/i.test(l) || /^£\s?[\d,]{5,}\b(?!\s*(?:pcm|pw|per))/i.test(l));
   if (priceIndex >= 0) out.asking = money(lines[priceIndex].match(/£\s?[\d,]{5,}/)![0]);
+  else {
+    // A shared headline has the price in the middle of its one line: "... house for sale, £150,000 - Zoopla".
+    const inHeadline = lines.find((l) => /\bfor sale\b/i.test(l))?.match(/£\s?([\d,]{5,})(?!\s*(?:pcm|pw|per))/i);
+    if (inHeadline) out.asking = money(inHeadline[1]);
+  }
 
   // Address: Zoopla puts it under the "... for sale" headline, Rightmove just above the price.
   const headline = lines.findIndex((l) => /\bfor sale\b/i.test(l) && /\bbed|house|flat|bungalow|maisonette|studio/i.test(l) && l.length < 90);
   const candidates = [headline >= 0 ? lines[headline + 1] : null, priceIndex > 0 ? lines[priceIndex - 1] : null, ...lines.slice(0, 120)].filter((l): l is string => !!l);
   const addressLine = candidates.find(looksLikeAddress);
-  if (addressLine) Object.assign(out, splitAddress(addressLine));
+  const fromHeadline = addressLine ? null : lines.map(headlineAddress).find((a): a is string => !!a);
+  if (addressLine ?? fromHeadline) Object.assign(out, splitAddress((addressLine ?? fromHeadline) as string));
 
   // Type and bedrooms.
   const typeLabel = lines.findIndex((l) => /^property type$/i.test(l));
-  out.propertyType = propertyType(headline >= 0 ? lines[headline] : '') ?? (typeLabel >= 0 ? propertyType(lines[typeLabel + 1] ?? '') : null) ?? propertyType(lines.slice(0, 60).join(' '));
+  out.propertyType = propertyType(headline >= 0 ? lines[headline] : (lines.find((l) => /\bfor sale\b/i.test(l)) ?? '')) ?? (typeLabel >= 0 ? propertyType(lines[typeLabel + 1] ?? '') : null) ?? propertyType(lines.slice(0, 60).join(' '));
   const bedLabel = lines.findIndex((l) => /^bedrooms$/i.test(l));
   const bedText = flat.match(/\b(\d{1,2})\s*bed(?:room)?s?\b/i);
   if (bedLabel >= 0 && /^\d{1,2}$/.test(lines[bedLabel + 1] ?? '')) out.bedrooms = Number(lines[bedLabel + 1]);
